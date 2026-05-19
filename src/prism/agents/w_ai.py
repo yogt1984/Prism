@@ -27,6 +27,10 @@ from prism.retry import retry_on_transient
 
 logger = logging.getLogger(__name__)
 
+# v2: added explicit (Source:) attribution requirement per claim,
+#     format-conditional HTML/prose, word count target.
+BRIEFING_PROMPT_VERSION = "2"
+
 BRIEFING_PROMPT = """\
 You are a news briefing writer. Generate a concise, personalized news briefing.
 

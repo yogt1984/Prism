@@ -26,6 +26,10 @@ from prism.retry import retry_on_transient
 
 logger = logging.getLogger(__name__)
 
+# v2: added explicit JSON-only instruction, required (Source:) in claims,
+#     restricted categories to fixed set.
+ANALYSIS_PROMPT_VERSION = "2"
+
 ANALYSIS_PROMPT = """\
 You are a news analyst. Given a cluster of articles about the same event,
 produce a structured analysis.
