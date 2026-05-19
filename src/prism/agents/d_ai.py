@@ -272,6 +272,12 @@ class DiscoveryAgent:
         all_articles.extend(rss_articles)
 
         clusters = self.deduplicate_articles(all_articles)
+        clusters.sort(key=len, reverse=True)
+        max_stories = settings.max_stories_per_cycle
+        if len(clusters) > max_stories:
+            logger.info("Capping clusters from %d to %d", len(clusters), max_stories)
+            clusters = clusters[:max_stories]
+
         stored = 0
         for cluster_articles in clusters:
             cluster = self.store_cluster(cluster_articles, engine)

@@ -627,3 +627,86 @@ def test_brave_published_at_round_trips(agent, db_engine):
         assert article.published_at is not None
         delta = datetime.now(UTC) - article.published_at.replace(tzinfo=UTC)
         assert 1.5 * 3600 <= delta.total_seconds() <= 2.5 * 3600
+
+
+# --- T8.3: max_stories_per_cycle enforcement ---
+
+def test_run_discovery_respects_max_stories(agent, db_engine):
+    """Only max_stories_per_cycle clusters are stored, largest first."""
+    # Generate 15 articles with completely different titles so each is its own cluster
+    distinct_titles = [
+        "Fed raises interest rates", "Olympics opening ceremony details",
+        "Hurricane warning issued coastal areas", "Mars rover discovers minerals",
+        "Parliament votes on trade agreement", "Earthquake strikes remote island",
+        "Vaccine trial shows promising results", "Stock market hits record high",
+        "Wildfire evacuations ordered mountain region", "New species discovered rainforest",
+        "Submarine cable damaged disrupting internet", "Solar eclipse visible northern hemisphere",
+        "Central bank announces policy change", "Archaeological dig reveals ancient city",
+        "Satellite launch successful orbit achieved",
+    ]
+    agent.search_brave = MagicMock(return_value=[
+        {"title": t, "url": f"https://x.com/{i}",
+         "description": "d", "source": "X"}
+        for i, t in enumerate(distinct_titles)
+    ])
+    agent.fetch_rss_sources = MagicMock(return_value=[])
+
+    with patch("prism.agents.d_ai.settings") as mock_settings:
+        mock_settings.max_stories_per_cycle = 5
+        mock_settings.brave_api_key = "test"
+        agent.run_discovery(queries=["test"], engine=db_engine)
+
+    with Session(db_engine) as s:
+        clusters = s.exec(select(StoryCluster)).all()
+        assert len(clusters) == 5
+
+
+def test_run_discovery_no_truncation_under_limit(agent, db_engine):
+    """All clusters stored when count is under the limit."""
+    agent.search_brave = MagicMock(return_value=[
+        {"title": f"Story {i}", "url": f"https://x.com/{i}",
+         "description": "d", "source": "X"}
+        for i in range(3)
+    ])
+    agent.fetch_rss_sources = MagicMock(return_value=[])
+
+    with patch("prism.agents.d_ai.settings") as mock_settings:
+        mock_settings.max_stories_per_cycle = 50
+        mock_settings.brave_api_key = "test"
+        agent.run_discovery(queries=["test"], engine=db_engine)
+
+    with Session(db_engine) as s:
+        clusters = s.exec(select(StoryCluster)).all()
+        assert len(clusters) == 3
+
+
+def test_run_discovery_prefers_larger_clusters(agent, db_engine):
+    """When truncating, clusters with more articles survive."""
+    # 2 articles that cluster together + 3 singletons = 4 clusters
+    articles = [
+        {"title": "Fed raises rates sharply", "url": "https://a.com/1",
+         "description": "d", "source": "A"},
+        {"title": "Fed raises rates sharply today", "url": "https://b.com/1",
+         "description": "d", "source": "B"},
+        {"title": "Olympics opening ceremony", "url": "https://c.com/1",
+         "description": "d", "source": "C"},
+        {"title": "New AI model released", "url": "https://d.com/1",
+         "description": "d", "source": "D"},
+        {"title": "Weather forecast update", "url": "https://e.com/1",
+         "description": "d", "source": "E"},
+    ]
+    agent.search_brave = MagicMock(return_value=articles)
+    agent.fetch_rss_sources = MagicMock(return_value=[])
+
+    with patch("prism.agents.d_ai.settings") as mock_settings:
+        mock_settings.max_stories_per_cycle = 2
+        mock_settings.brave_api_key = "test"
+        agent.run_discovery(queries=["test"], engine=db_engine)
+
+    with Session(db_engine) as s:
+        clusters = s.exec(
+            select(StoryCluster).order_by(StoryCluster.article_count.desc())  # type: ignore[union-attr]
+        ).all()
+        assert len(clusters) == 2
+        # The 2-article Fed cluster should be first (largest)
+        assert clusters[0].article_count == 2
