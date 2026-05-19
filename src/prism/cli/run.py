@@ -4,7 +4,7 @@ from typing import Annotated
 
 import typer
 
-from prism.cli._fmt import console
+from prism.cli._fmt import console, info
 
 app = typer.Typer(help="Run the pipeline scheduler.")
 
@@ -32,11 +32,11 @@ def run(
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
-    console.print("  Initializing Prism pipeline...")
+    info("  Initializing Prism pipeline...")
     engine = init_db()
 
     if once:
-        console.print("  Running single cycle: discover -> analyze -> brief")
+        info("  Running single cycle: discover -> analyze -> brief")
         discovery_cycle(engine)
         analysis_cycle(engine)
         briefing_cycle(engine)
@@ -45,7 +45,7 @@ def run(
 
     scheduler = build_scheduler()
     install_signal_handlers(scheduler)
-    console.print("  Pipeline started. Press Ctrl+C to stop.")
+    info("  Pipeline started. Press Ctrl+C to stop.")
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):

@@ -11,14 +11,10 @@ from rich.panel import Panel
 from rich.table import Table
 from sqlmodel import Session, func, select
 
+from prism.cli._fmt import cli_get_engine as _get_engine
 from prism.cli._fmt import console, is_json_mode, print_json
 
 app = typer.Typer(help="Pipeline status dashboard.")
-
-
-def _get_engine():  # type: ignore[no-untyped-def]
-    from prism.db import get_engine
-    return get_engine()
 
 
 def _collect_stats(engine) -> dict:  # type: ignore[no-untyped-def, type-arg]

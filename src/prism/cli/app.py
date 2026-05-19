@@ -5,7 +5,14 @@ from typing import Annotated
 
 import typer
 
-from prism.cli._fmt import console, is_json_mode, print_json, set_json_mode
+from prism.cli._fmt import (
+    console,
+    is_json_mode,
+    print_json,
+    set_db_override,
+    set_json_mode,
+    set_quiet_mode,
+)
 from prism.cli.briefing import app as briefing_app
 from prism.cli.config_cmd import app as config_app
 from prism.cli.cycle import app as cycle_app
@@ -39,13 +46,33 @@ def _json_callback(value: bool) -> None:
         set_json_mode(True)
 
 
+def _quiet_callback(value: bool) -> None:
+    if value:
+        set_quiet_mode(True)
+
+
+def _db_callback(value: str | None) -> None:
+    if value:
+        set_db_override(value)
+
+
 @app.callback()
 def main_callback(
     json_output: Annotated[
         bool,
-        typer.Option("--json", help="Machine-readable JSON output.", callback=_json_callback,
-                     is_eager=True),
+        typer.Option("--json", help="Machine-readable JSON output.",
+                     callback=_json_callback, is_eager=True),
     ] = False,
+    quiet: Annotated[
+        bool,
+        typer.Option("--quiet", "-q", help="Suppress progress messages.",
+                     callback=_quiet_callback, is_eager=True),
+    ] = False,
+    db: Annotated[
+        str | None,
+        typer.Option("--db", help="Override database URL.",
+                     callback=_db_callback, is_eager=True),
+    ] = None,
 ) -> None:
     """Global options applied before any subcommand."""
 

@@ -5,14 +5,18 @@ from typing import Annotated
 import typer
 from sqlmodel import Session, select
 
-from prism.cli._fmt import console, err_console, is_json_mode, print_json, print_table
+from prism.cli._fmt import (
+    cli_get_engine as _get_engine,
+)
+from prism.cli._fmt import (
+    console,
+    err_console,
+    is_json_mode,
+    print_json,
+    print_table,
+)
 
 app = typer.Typer(help="User management.")
-
-
-def _get_engine():  # type: ignore[no-untyped-def]
-    from prism.db import get_engine
-    return get_engine()
 
 
 def _find_user(session: Session, email: str):  # type: ignore[no-untyped-def]

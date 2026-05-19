@@ -4,14 +4,18 @@ from typing import Annotated
 
 import typer
 
-from prism.cli._fmt import console, err_console, is_json_mode, print_json
+from prism.cli._fmt import (
+    cli_get_engine as _get_engine,
+)
+from prism.cli._fmt import (
+    console,
+    err_console,
+    info,
+    is_json_mode,
+    print_json,
+)
 
 app = typer.Typer(help="Manually trigger agent cycles.")
-
-
-def _get_engine():  # type: ignore[no-untyped-def]
-    from prism.db import get_engine
-    return get_engine()
 
 
 @app.command("discover")
@@ -19,8 +23,7 @@ def cycle_discover() -> None:
     """Run D_AI discovery cycle once."""
     from prism.main import discovery_cycle
 
-    if not is_json_mode():
-        console.print("  Running discovery cycle...")
+    info("  Running discovery cycle...")
     discovery_cycle(_get_engine())
 
     if is_json_mode():
@@ -34,8 +37,7 @@ def cycle_analyze() -> None:
     """Run A_AI analysis cycle once."""
     from prism.main import analysis_cycle
 
-    if not is_json_mode():
-        console.print("  Running analysis cycle...")
+    info("  Running analysis cycle...")
     analysis_cycle(_get_engine())
 
     if is_json_mode():
@@ -74,8 +76,7 @@ def cycle_brief(
     else:
         users = p_ai.get_all_users(engine)
 
-    if not is_json_mode():
-        console.print(f"  Running briefing cycle for {len(users)} user(s)...")
+    info(f"  Running briefing cycle for {len(users)} user(s)...")
     sent = 0
     for u in users:
         clusters = p_ai.select_stories(u, engine)
@@ -86,4 +87,6 @@ def cycle_brief(
     if is_json_mode():
         print_json({"cycle": "briefing", "users": len(users), "sent": sent})
         return
-    console.print(f"  [green]Briefing cycle complete.[/green] {sent}/{len(users)} sent.")
+    console.print(
+        f"  [green]Briefing cycle complete.[/green] {sent}/{len(users)} sent."
+    )
