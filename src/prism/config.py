@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # W_AI settings
     briefing_schedule_cron: str = "0 7 * * *"  # 7 AM daily
 
+    # Monitoring
+    ntfy_topic: str = ""  # ntfy.sh topic for push alerts (empty = disabled)
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
