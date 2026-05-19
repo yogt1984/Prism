@@ -23,6 +23,7 @@ from prism.models import (
     StoryCluster,
     User,
 )
+from prism.retry import retry_on_transient
 
 logger = logging.getLogger(__name__)
 
@@ -94,17 +95,28 @@ class WriterAgent:
             story_count=len(clusters),
         )
 
-        response = self.client.messages.create(
+        response = self._call_claude(prompt)
+        return response.content[0].text
+
+    @retry_on_transient(max_retries=3, base_delay=2.0)
+    def _call_claude(self, prompt: str):  # type: ignore[no-untyped-def]
+        """Call Claude API with retry on transient failures."""
+        return self.client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.content[0].text
+
+    @staticmethod
+    @retry_on_transient(max_retries=3, base_delay=2.0, extra_exceptions=(Exception,))
+    def _send_via_resend(payload: dict) -> None:
+        """Send email via Resend with retry on transient failures."""
+        resend.Emails.send(payload)
 
     def send_email(self, user: User, content_html: str) -> bool:
         """Send briefing via email using Resend."""
         try:
-            resend.Emails.send({
+            self._send_via_resend({
                 "from": settings.briefing_from_email,
                 "to": [user.email],
                 "subject": f"Your News Briefing — {datetime.now(UTC).strftime('%B %d, %Y')}",

@@ -22,6 +22,7 @@ from prism.models import (
     StoryCluster,
     StoryStatus,
 )
+from prism.retry import retry_on_transient
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,15 @@ class AnalysisAgent:
             return BiasLabel(value)
         return BiasLabel.UNKNOWN
 
+    @retry_on_transient(max_retries=3, base_delay=2.0)
+    def _call_claude(self, prompt: str):  # type: ignore[no-untyped-def]
+        """Call Claude API with retry on transient failures."""
+        return self.client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
     def analyze_cluster(
         self, cluster_id: int, engine: Engine | None = None,
     ) -> None:
@@ -134,11 +144,7 @@ class AnalysisAgent:
                 articles_json=json.dumps(articles_data, indent=2),
             )
 
-            response = self.client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=4096,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            response = self._call_claude(prompt)
 
             try:
                 result = json.loads(response.content[0].text)
