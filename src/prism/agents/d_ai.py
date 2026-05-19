@@ -1,0 +1,251 @@
+"""D_AI — Discovery Agent.
+
+Uses Brave Search API and RSS feeds to discover news stories,
+clusters them by event, and maintains a source trust registry.
+"""
+
+import logging
+from calendar import timegm
+from datetime import UTC, datetime, timedelta
+from time import struct_time
+from urllib.parse import urlparse
+
+import feedparser
+import httpx
+from sqlalchemy import Engine
+from sqlmodel import Session, select
+
+from prism.config import settings
+from prism.db import get_engine, get_session
+from prism.models import Article, Source, StoryCluster, StoryStatus
+
+logger = logging.getLogger(__name__)
+
+BRAVE_NEWS_URL = "https://api.search.brave.com/res/v1/news/search"
+
+
+class DiscoveryAgent:
+    def __init__(self) -> None:
+        self.http = httpx.Client(
+            headers={"X-Subscription-Token": settings.brave_api_key},
+            timeout=30.0,
+        )
+
+    def search_brave(self, query: str, count: int = 20) -> list[dict]:
+        """Search Brave News API for recent articles on a topic."""
+        resp = self.http.get(
+            BRAVE_NEWS_URL,
+            params={"q": query, "count": count, "freshness": "pd"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("results", [])
+
+    def fetch_rss_sources(self, engine: Engine | None = None) -> list[dict]:
+        """Fetch latest articles from RSS feeds of active, trusted sources."""
+        e = engine or get_engine()
+        articles: list[dict] = []
+
+        with Session(e) as session:
+            sources = session.exec(
+                select(Source).where(
+                    Source.active == True,  # noqa: E712
+                    Source.rss_url != "",
+                )
+            ).all()
+
+            # Collect existing article URLs for dedup
+            existing_urls: set[str] = set()
+            for row in session.exec(select(Article.url)).all():
+                existing_urls.add(row)
+
+            for source in sources:
+                try:
+                    feed = feedparser.parse(source.rss_url)
+                    if feed.bozo:
+                        logger.warning(
+                            "Malformed/bozo RSS feed for %s (%s)", source.name, source.rss_url
+                        )
+                        continue
+
+                    for entry in feed.entries:
+                        url = getattr(entry, "link", "")
+                        if url in existing_urls:
+                            continue
+
+                        published_at = None
+                        pp = getattr(entry, "published_parsed", None)
+                        if isinstance(pp, struct_time):
+                            published_at = datetime.fromtimestamp(timegm(pp), tz=UTC).isoformat()
+
+                        articles.append({
+                            "title": getattr(entry, "title", ""),
+                            "url": url,
+                            "description": entry.get("summary", ""),
+                            "source": source.name,
+                            "published_at": published_at,
+                        })
+                        existing_urls.add(url)
+
+                except Exception:
+                    logger.exception("Failed to fetch RSS for %s", source.name)
+
+        logger.info("RSS fetch complete: %d new articles from %d sources",
+                     len(articles), len(sources) if sources else 0)
+        return articles
+
+    # --- Deduplication ---
+
+    @staticmethod
+    def _jaccard(a: str, b: str) -> float:
+        """Word-set Jaccard similarity between two strings."""
+        words_a = set(a.lower().split())
+        words_b = set(b.lower().split())
+        if not words_a or not words_b:
+            return 0.0
+        return len(words_a & words_b) / len(words_a | words_b)
+
+    def deduplicate_articles(
+        self, articles: list[dict], threshold: float = 0.6,
+    ) -> list[list[dict]]:
+        """Group articles covering the same story using word-set Jaccard similarity."""
+        clusters: list[list[dict]] = []
+        for article in articles:
+            title = article.get("title", "")
+            placed = False
+            for cluster in clusters:
+                if self._jaccard(title, cluster[0].get("title", "")) >= threshold:
+                    cluster.append(article)
+                    placed = True
+                    break
+            if not placed:
+                clusters.append([article])
+        return clusters
+
+    # --- Storage ---
+
+    def _find_existing_cluster(
+        self, session: Session, title: str,
+    ) -> StoryCluster | None:
+        """Check if a matching cluster from the last 24h already exists."""
+        cutoff = datetime.now(UTC) - timedelta(hours=24)
+        recent = session.exec(
+            select(StoryCluster).where(StoryCluster.first_seen >= cutoff)
+        ).all()
+        for cluster in recent:
+            if self._jaccard(title, cluster.headline) >= 0.6:
+                return cluster
+        return None
+
+    def store_cluster(
+        self, articles: list[dict], engine: Engine | None = None,
+    ) -> StoryCluster | None:
+        """Store a story cluster and its articles, merging into existing clusters."""
+        if not articles:
+            return None
+
+        e = engine or get_engine()
+        with Session(e) as session:
+            title = articles[0].get("title", "")
+            cluster = self._find_existing_cluster(session, title)
+
+            if cluster:
+                cluster.article_count += len(articles)
+                cluster.last_updated = datetime.now(UTC)
+            else:
+                cluster = StoryCluster(
+                    headline=title,
+                    article_count=len(articles),
+                    status=StoryStatus.RAW,
+                )
+                session.add(cluster)
+                session.commit()
+                session.refresh(cluster)
+
+            for raw in articles:
+                url = raw.get("url", "")
+                existing = session.exec(select(Article).where(Article.url == url)).first()
+                if existing:
+                    continue
+
+                source = self._get_or_create_source(session, raw, e)
+                article = Article(
+                    cluster_id=cluster.id,
+                    source_id=source.id,  # type: ignore[arg-type]
+                    title=raw.get("title", ""),
+                    url=url,
+                    snippet=raw.get("description", ""),
+                )
+                session.add(article)
+
+            session.commit()
+            session.refresh(cluster)
+            return cluster
+
+    def _get_or_create_source(
+        self, session: Session, raw: dict, engine: Engine | None = None,
+    ) -> Source:
+        """Find or create a source entry from article metadata."""
+        url = raw.get("url", "")
+        domain = urlparse(url).netloc.removeprefix("www.")
+
+        existing = session.exec(select(Source).where(Source.url == domain)).first()
+        if existing:
+            return existing
+
+        source = Source(
+            name=raw.get("source", domain),
+            url=domain,
+        )
+        session.add(source)
+        session.commit()
+        session.refresh(source)
+        return source
+
+    # --- Full Cycle ---
+
+    def run_discovery(
+        self,
+        queries: list[str] | None = None,
+        engine: Engine | None = None,
+    ) -> None:
+        """Run one discovery cycle across configured topics."""
+        if queries is None:
+            queries = [
+                "latest news", "finance news", "technology news",
+                "politics news", "sports news", "science news",
+            ]
+
+        all_articles: list[dict] = []
+        for query in queries:
+            try:
+                results = self.search_brave(query, count=10)
+                all_articles.extend(results)
+                logger.info("Brave search '%s': %d results", query, len(results))
+            except Exception:
+                logger.exception("Failed to search Brave for '%s'", query)
+
+        rss_articles = self.fetch_rss_sources(engine)
+        all_articles.extend(rss_articles)
+
+        clusters = self.deduplicate_articles(all_articles)
+        stored = 0
+        for cluster_articles in clusters:
+            cluster = self.store_cluster(cluster_articles, engine)
+            if cluster:
+                stored += 1
+
+        logger.info(
+            "Discovery cycle complete. Stored %d clusters from %d articles.",
+            stored, len(all_articles),
+        )
+
+    def get_trusted_sources(self, min_trust: float | None = None) -> list[Source]:
+        """Retrieve sources above the trust threshold."""
+        threshold = min_trust or settings.min_source_trust_score
+        with get_session() as session:
+            stmt = select(Source).where(
+                Source.active == True,  # noqa: E712
+                Source.trust_score >= threshold,
+            )
+            return list(session.exec(stmt).all())

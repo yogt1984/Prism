@@ -1,0 +1,206 @@
+"""A_AI — Analysis Agent.
+
+Analyzes story clusters: summarizes, extracts perspectives,
+detects sentiment/bias, and categorizes by topic.
+"""
+
+import json
+import logging
+import time
+
+import anthropic
+from sqlalchemy import Engine
+from sqlmodel import Session, select
+
+from prism.config import settings
+from prism.db import get_engine
+from prism.models import (
+    Article,
+    BiasLabel,
+    Perspective,
+    Source,
+    StoryCluster,
+    StoryStatus,
+)
+
+logger = logging.getLogger(__name__)
+
+ANALYSIS_PROMPT = """\
+You are a news analyst. Given a cluster of articles about the same event,
+produce a structured analysis.
+
+Articles:
+{articles_json}
+
+Respond with valid JSON only (no markdown fences):
+{{
+    "headline": "concise neutral headline for this story",
+    "summary": "2-3 sentence neutral summary of the core facts",
+    "categories": ["list", "of", "categories"],
+    "perspectives": [
+        {{
+            "source_name": "name of the outlet",
+            "source_id": <source_id>,
+            "summary": "how this source frames the story",
+            "sentiment": <float -1.0 to 1.0>,
+            "bias_label": "left|center_left|center|center_right|right|unknown",
+            "key_claims": ["claim 1 (Source: outlet)", "claim 2 (Source: outlet)"]
+        }}
+    ]
+}}
+
+Rules:
+- Be factual. Do not editorialize.
+- Every claim must be traceable to a specific source article.
+- If sources disagree on facts, note the disagreement explicitly.
+- Categories must be from: finance, politics, technology, sports, \
+culture, science, health, world.
+"""
+
+_VALID_BIAS_LABELS = {b.value for b in BiasLabel}
+
+
+class AnalysisAgent:
+    def __init__(self) -> None:
+        self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+
+    @staticmethod
+    def _truncate_articles(
+        articles_data: list[dict], max_tokens: int,
+    ) -> list[dict]:
+        """Truncate article snippets to fit within token budget."""
+        char_budget = max_tokens * 4  # ~4 chars per token
+        base_chars = sum(
+            len(a["title"]) + len(a["url"]) + 50 for a in articles_data
+        )
+        snippet_budget = max(0, char_budget - base_chars)
+        per_article = snippet_budget // max(len(articles_data), 1)
+
+        for a in articles_data:
+            if len(a["snippet"]) > per_article:
+                a["snippet"] = a["snippet"][:per_article] + "..."
+        return articles_data
+
+    @staticmethod
+    def _clamp_sentiment(value: float) -> float:
+        return max(-1.0, min(1.0, value))
+
+    @staticmethod
+    def _safe_bias_label(value: str) -> BiasLabel:
+        if value in _VALID_BIAS_LABELS:
+            return BiasLabel(value)
+        return BiasLabel.UNKNOWN
+
+    def analyze_cluster(
+        self, cluster_id: int, engine: Engine | None = None,
+    ) -> None:
+        """Analyze a story cluster and store perspectives."""
+        e = engine or get_engine()
+        with Session(e) as session:
+            cluster = session.get(StoryCluster, cluster_id)
+            if cluster is None:
+                logger.warning("Cluster %d not found", cluster_id)
+                return
+
+            articles = session.exec(
+                select(Article).where(Article.cluster_id == cluster_id)
+            ).all()
+
+            if not articles:
+                logger.warning(
+                    "Cluster %d has no articles, skipping", cluster_id,
+                )
+                return
+
+            # Keep top 15 articles (by source_id as proxy for trust)
+            sorted_articles = sorted(
+                articles, key=lambda a: a.source_id,
+            )[:15]
+
+            articles_data = [
+                {
+                    "source_id": a.source_id,
+                    "title": a.title,
+                    "url": a.url,
+                    "snippet": a.snippet,
+                }
+                for a in sorted_articles
+            ]
+            articles_data = self._truncate_articles(
+                articles_data, settings.max_input_tokens,
+            )
+
+            prompt = ANALYSIS_PROMPT.format(
+                articles_json=json.dumps(articles_data, indent=2),
+            )
+
+            response = self.client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+            )
+
+            try:
+                result = json.loads(response.content[0].text)
+            except (json.JSONDecodeError, IndexError):
+                logger.error(
+                    "Failed to parse analysis response for cluster %d",
+                    cluster_id,
+                )
+                return
+
+            # Update cluster
+            cluster.headline = result.get("headline", cluster.headline)
+            cluster.summary = result.get("summary", "")
+            cluster.categories = ",".join(result.get("categories", []))
+            cluster.status = StoryStatus.ANALYZED
+
+            # Store perspectives
+            for p in result.get("perspectives", []):
+                # Validate source_id exists
+                sid = p.get("source_id", articles[0].source_id)
+                if session.get(Source, sid) is None:
+                    sid = articles[0].source_id
+
+                perspective = Perspective(
+                    cluster_id=cluster_id,
+                    source_id=sid,
+                    summary=p.get("summary", ""),
+                    sentiment=self._clamp_sentiment(
+                        float(p.get("sentiment", 0.0)),
+                    ),
+                    bias_label=self._safe_bias_label(
+                        p.get("bias_label", "unknown"),
+                    ),
+                    key_claims=json.dumps(p.get("key_claims", [])),
+                )
+                session.add(perspective)
+
+            session.add(cluster)
+            session.commit()
+            logger.info(
+                "Analyzed cluster %d: %s (%d perspectives)",
+                cluster_id,
+                cluster.headline,
+                len(result.get("perspectives", [])),
+            )
+
+    def process_pending(self, engine: Engine | None = None) -> None:
+        """Analyze all raw (unanalyzed) story clusters."""
+        e = engine or get_engine()
+        with Session(e) as session:
+            clusters = session.exec(
+                select(StoryCluster).where(
+                    StoryCluster.status == StoryStatus.RAW,
+                )
+            ).all()
+            cluster_ids = [c.id for c in clusters]
+
+        logger.info("Found %d raw clusters to analyze", len(cluster_ids))
+        for i, cid in enumerate(cluster_ids):
+            if i > 0:
+                time.sleep(1)
+            try:
+                self.analyze_cluster(cid, e)
+            except Exception:
+                logger.exception("Failed to analyze cluster %d", cid)
