@@ -7,6 +7,7 @@ T1.6 (full discovery cycle). Written TDD — tests first.
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from time import struct_time
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -457,3 +458,84 @@ def test_run_discovery_merges_cross_cycle(agent, db_engine):
         clusters = s.exec(select(StoryCluster)).all()
         assert len(clusters) == 1  # merged, not duplicated
         assert clusters[0].article_count == 2
+
+
+# --- T8.1: published_at propagation ---
+
+def test_store_cluster_sets_published_at_from_iso_string(agent, db_engine):
+    """Articles with an ISO published_at string get it stored on the Article row."""
+    articles = [
+        {"title": "Story with date", "url": "https://x.com/dated",
+         "description": "d", "source": "X",
+         "published_at": "2026-05-18T10:00:00+00:00"},
+    ]
+    agent.store_cluster(articles, db_engine)
+
+    with Session(db_engine) as s:
+        article = s.exec(select(Article).where(Article.url == "https://x.com/dated")).one()
+        assert article.published_at is not None
+        assert article.published_at.year == 2026
+        assert article.published_at.month == 5
+        assert article.published_at.day == 18
+
+
+def test_store_cluster_sets_published_at_from_datetime(agent, db_engine):
+    """Articles with a datetime published_at also work."""
+    dt = datetime(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
+    articles = [
+        {"title": "Story with dt", "url": "https://x.com/dt",
+         "description": "d", "source": "X",
+         "published_at": dt},
+    ]
+    agent.store_cluster(articles, db_engine)
+
+    with Session(db_engine) as s:
+        article = s.exec(select(Article).where(Article.url == "https://x.com/dt")).one()
+        assert article.published_at is not None
+        assert article.published_at.hour == 12
+
+
+def test_store_cluster_handles_missing_published_at(agent, db_engine):
+    """Articles without published_at get None — no crash."""
+    articles = [
+        {"title": "No date story", "url": "https://x.com/nodate",
+         "description": "d", "source": "X"},
+    ]
+    agent.store_cluster(articles, db_engine)
+
+    with Session(db_engine) as s:
+        article = s.exec(select(Article).where(Article.url == "https://x.com/nodate")).one()
+        assert article.published_at is None
+
+
+def test_rss_published_at_round_trips(agent, db_engine):
+    """RSS articles with published_parsed end up with published_at in the DB."""
+    with Session(db_engine) as s:
+        s.add(Source(name="Reuters", url="reuters.com",
+                     rss_url="https://reuters.com/rss", active=True))
+        s.commit()
+
+    with patch("prism.agents.d_ai.feedparser") as mock_fp:
+        mock_fp.parse.return_value = MagicMock(
+            entries=[
+                MagicMock(
+                    title="Dated RSS story",
+                    link="https://reuters.com/dated-rss",
+                    get=lambda k, d="": {"summary": "desc"}.get(k, d),
+                    published_parsed=struct_time((2026, 5, 18, 10, 0, 0, 6, 138, 0)),
+                ),
+            ],
+            bozo=False,
+        )
+        rss_articles = agent.fetch_rss_sources(db_engine)
+
+    # Store the RSS articles
+    agent.store_cluster(rss_articles, db_engine)
+
+    with Session(db_engine) as s:
+        article = s.exec(
+            select(Article).where(Article.url == "https://reuters.com/dated-rss")
+        ).one()
+        assert article.published_at is not None
+        assert article.published_at.year == 2026
+        assert article.published_at.month == 5

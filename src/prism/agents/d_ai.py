@@ -171,12 +171,22 @@ class DiscoveryAgent:
                     continue
 
                 source = self._get_or_create_source(session, raw, e)
+
+                pub_raw = raw.get("published_at")
+                if isinstance(pub_raw, str):
+                    pub_at = datetime.fromisoformat(pub_raw)
+                elif isinstance(pub_raw, datetime):
+                    pub_at = pub_raw
+                else:
+                    pub_at = None
+
                 article = Article(
                     cluster_id=cluster.id,
                     source_id=source.id,  # type: ignore[arg-type]
                     title=raw.get("title", ""),
                     url=url,
                     snippet=raw.get("description", ""),
+                    published_at=pub_at,
                 )
                 session.add(article)
 
