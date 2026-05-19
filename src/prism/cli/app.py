@@ -8,7 +8,10 @@ import typer
 from prism.cli._fmt import console, is_json_mode, print_json, set_json_mode
 from prism.cli.briefing import app as briefing_app
 from prism.cli.config_cmd import app as config_app
+from prism.cli.cycle import app as cycle_app
+from prism.cli.run import app as run_app
 from prism.cli.source import app as source_app
+from prism.cli.status import app as status_app
 from prism.cli.story import app as story_app
 from prism.cli.user import app as user_app
 
@@ -19,6 +22,9 @@ app = typer.Typer(
     rich_markup_mode="rich",
 )
 
+app.add_typer(run_app, name="run")
+app.add_typer(status_app, name="status")
+app.add_typer(cycle_app, name="cycle")
 app.add_typer(config_app, name="config")
 app.add_typer(user_app, name="user")
 app.add_typer(source_app, name="source")
