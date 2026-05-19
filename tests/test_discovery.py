@@ -539,3 +539,91 @@ def test_rss_published_at_round_trips(agent, db_engine):
         assert article.published_at is not None
         assert article.published_at.year == 2026
         assert article.published_at.month == 5
+
+
+# --- T8.2: Brave published_at parsing ---
+
+class TestParseBraveAge:
+    def test_hours_ago(self, agent):
+        dt = agent._parse_brave_age("5 hours ago")
+        assert dt is not None
+        delta = datetime.now(UTC) - dt
+        assert 4.9 * 3600 <= delta.total_seconds() <= 5.1 * 3600
+
+    def test_minutes_ago(self, agent):
+        dt = agent._parse_brave_age("30 minutes ago")
+        assert dt is not None
+        delta = datetime.now(UTC) - dt
+        assert 29 * 60 <= delta.total_seconds() <= 31 * 60
+
+    def test_days_ago(self, agent):
+        dt = agent._parse_brave_age("2 days ago")
+        assert dt is not None
+        delta = datetime.now(UTC) - dt
+        assert 1.9 * 86400 <= delta.total_seconds() <= 2.1 * 86400
+
+    def test_weeks_ago(self, agent):
+        dt = agent._parse_brave_age("1 week ago")
+        assert dt is not None
+        delta = datetime.now(UTC) - dt
+        assert 6.9 * 86400 <= delta.total_seconds() <= 7.1 * 86400
+
+    def test_singular_unit(self, agent):
+        dt = agent._parse_brave_age("1 hour ago")
+        assert dt is not None
+
+    def test_invalid_string(self, agent):
+        assert agent._parse_brave_age("just now") is None
+        assert agent._parse_brave_age("") is None
+        assert agent._parse_brave_age("yesterday") is None
+
+
+class TestNormalizeBraveResults:
+    def test_adds_published_at_from_age(self, agent):
+        results = [
+            {"title": "Story", "url": "https://x.com/1", "age": "3 hours ago"},
+        ]
+        normalized = agent._normalize_brave_results(results)
+        assert "published_at" in normalized[0]
+        assert normalized[0]["published_at"] is not None
+
+    def test_skips_when_published_at_already_set(self, agent):
+        results = [
+            {"title": "Story", "url": "https://x.com/1",
+             "age": "3 hours ago", "published_at": "2026-05-18T10:00:00+00:00"},
+        ]
+        normalized = agent._normalize_brave_results(results)
+        assert normalized[0]["published_at"] == "2026-05-18T10:00:00+00:00"
+
+    def test_handles_missing_age(self, agent):
+        results = [
+            {"title": "Story", "url": "https://x.com/1"},
+        ]
+        normalized = agent._normalize_brave_results(results)
+        assert "published_at" not in normalized[0] or normalized[0].get("published_at") is None
+
+    def test_handles_unparseable_age(self, agent):
+        results = [
+            {"title": "Story", "url": "https://x.com/1", "age": "just now"},
+        ]
+        normalized = agent._normalize_brave_results(results)
+        assert normalized[0].get("published_at") is None
+
+
+def test_brave_published_at_round_trips(agent, db_engine):
+    """Brave results with age field end up with published_at in the DB."""
+    agent.search_brave = MagicMock(return_value=[
+        {"title": "Brave story", "url": "https://brave.com/story1",
+         "description": "d", "source": "Brave Source", "age": "2 hours ago"},
+    ])
+    agent.fetch_rss_sources = MagicMock(return_value=[])
+
+    agent.run_discovery(queries=["test"], engine=db_engine)
+
+    with Session(db_engine) as s:
+        article = s.exec(
+            select(Article).where(Article.url == "https://brave.com/story1")
+        ).one()
+        assert article.published_at is not None
+        delta = datetime.now(UTC) - article.published_at.replace(tzinfo=UTC)
+        assert 1.5 * 3600 <= delta.total_seconds() <= 2.5 * 3600

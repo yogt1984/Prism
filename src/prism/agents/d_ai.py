@@ -214,6 +214,37 @@ class DiscoveryAgent:
         session.refresh(source)
         return source
 
+    # --- Brave date parsing ---
+
+    @staticmethod
+    def _parse_brave_age(age_str: str) -> datetime | None:
+        """Parse Brave API 'age' field (e.g. '5 hours ago') to a UTC datetime."""
+        import re
+
+        m = re.match(r"(\d+)\s+(minute|hour|day|week|month)s?\s+ago", age_str.strip())
+        if not m:
+            return None
+        value, unit = int(m.group(1)), m.group(2)
+        deltas = {
+            "minute": timedelta(minutes=value),
+            "hour": timedelta(hours=value),
+            "day": timedelta(days=value),
+            "week": timedelta(weeks=value),
+            "month": timedelta(days=value * 30),
+        }
+        return datetime.now(UTC) - deltas[unit]
+
+    def _normalize_brave_results(self, results: list[dict]) -> list[dict]:
+        """Add published_at to Brave results from age or meta_url fields."""
+        for r in results:
+            if "published_at" not in r or r["published_at"] is None:
+                age = r.get("age", "")
+                if age:
+                    dt = self._parse_brave_age(age)
+                    if dt:
+                        r["published_at"] = dt.isoformat()
+        return results
+
     # --- Full Cycle ---
 
     def run_discovery(
@@ -231,7 +262,7 @@ class DiscoveryAgent:
         all_articles: list[dict] = []
         for query in queries:
             try:
-                results = self.search_brave(query, count=10)
+                results = self._normalize_brave_results(self.search_brave(query, count=10))
                 all_articles.extend(results)
                 logger.info("Brave search '%s': %d results", query, len(results))
             except Exception:
