@@ -78,10 +78,16 @@ def build_scheduler() -> BlockingScheduler:
         id="analysis",
     )
 
+    # Parse "min hour dom month dow" cron expression from config
+    cron_parts = settings.briefing_schedule_cron.split()
     scheduler.add_job(
         briefing_cycle,
         "cron",
-        hour=7,
+        minute=cron_parts[0] if len(cron_parts) > 0 else "0",
+        hour=cron_parts[1] if len(cron_parts) > 1 else "7",
+        day=cron_parts[2] if len(cron_parts) > 2 else "*",
+        month=cron_parts[3] if len(cron_parts) > 3 else "*",
+        day_of_week=cron_parts[4] if len(cron_parts) > 4 else "*",
         id="briefing",
     )
 

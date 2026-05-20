@@ -45,6 +45,32 @@ def test_scheduler_briefing_cron():
     assert isinstance(job.trigger, CronTrigger)
 
 
+def test_scheduler_briefing_cron_reads_config():
+    """Briefing cron fields come from settings.briefing_schedule_cron."""
+    with patch("prism.main.settings") as mock_settings:
+        mock_settings.discovery_interval_hours = 1
+        mock_settings.briefing_schedule_cron = "30 9 * * 1-5"
+        scheduler = build_scheduler()
+
+    job = scheduler.get_job("briefing")
+    trigger = job.trigger
+    assert isinstance(trigger, CronTrigger)
+    # Verify fields parsed from the cron string
+    fields = {f.name: str(f) for f in trigger.fields}
+    assert fields["minute"] == "30"
+    assert fields["hour"] == "9"
+    assert fields["day_of_week"] in ("mon-fri", "1-5")
+
+
+def test_scheduler_briefing_cron_default():
+    """Default cron '0 7 * * *' produces hour=7, minute=0."""
+    scheduler = build_scheduler()
+    job = scheduler.get_job("briefing")
+    fields = {f.name: str(f) for f in job.trigger.fields}
+    assert fields["minute"] == "0"
+    assert fields["hour"] == "7"
+
+
 def test_scheduler_shutdown_on_signal():
     """SIGINT handler calls scheduler.shutdown()."""
     scheduler = build_scheduler()
