@@ -36,7 +36,6 @@ class BriefingFormat(StrEnum):
 class StoryStatus(StrEnum):
     RAW = "raw"
     ANALYZED = "analyzed"
-    READY = "ready"
 
 
 # --- Source Registry ---

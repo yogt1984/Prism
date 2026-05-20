@@ -14,7 +14,7 @@
 
 ### Design Decisions
 
-- **No Redis.** Agents communicate via DB status fields (`StoryStatus.RAW → ANALYZED → READY`). All agents run on one box via APScheduler. DB polling every 30m is sufficient at this scale.
+- **No Redis.** Agents communicate via DB status fields (`StoryStatus.RAW → ANALYZED`). All agents run on one box via APScheduler. DB polling every 30m is sufficient at this scale.
 - **No datasketch for MVP.** Story deduplication uses simple word-set Jaccard similarity. Add MinHash if article volume exceeds 1k/cycle.
 - **No automated trust tuning.** Source trust/bias scores are manually curated. Seed 20-30 known outlets at launch.
 - **No engagement webhooks for beta.** Tracking pixels require a web server. Collect beta feedback via direct user surveys instead.
