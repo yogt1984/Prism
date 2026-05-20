@@ -257,8 +257,14 @@ class DiscoveryAgent:
         return datetime.now(UTC) - deltas[unit]
 
     def _normalize_brave_results(self, results: list[dict]) -> list[dict]:
-        """Add published_at to Brave results from age or meta_url fields."""
+        """Normalize Brave results: extract source from meta_url, parse age."""
         for r in results:
+            # Map source name from meta_url.hostname when missing
+            if not r.get("source"):
+                hostname = (r.get("meta_url") or {}).get("hostname", "")
+                if hostname:
+                    r["source"] = hostname.removeprefix("www.")
+
             if "published_at" not in r or r["published_at"] is None:
                 age = r.get("age", "")
                 if age:

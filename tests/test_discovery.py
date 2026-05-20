@@ -609,6 +609,31 @@ class TestNormalizeBraveResults:
         normalized = agent._normalize_brave_results(results)
         assert normalized[0].get("published_at") is None
 
+    def test_source_from_meta_url_hostname(self, agent):
+        results = [
+            {"title": "Story", "url": "https://x.com/1",
+             "meta_url": {"hostname": "www.reuters.com"}},
+        ]
+        normalized = agent._normalize_brave_results(results)
+        assert normalized[0]["source"] == "reuters.com"
+
+    def test_source_not_overwritten_when_present(self, agent):
+        results = [
+            {"title": "Story", "url": "https://x.com/1",
+             "source": "Reuters",
+             "meta_url": {"hostname": "feeds.reuters.com"}},
+        ]
+        normalized = agent._normalize_brave_results(results)
+        assert normalized[0]["source"] == "Reuters"
+
+    def test_source_missing_meta_url(self, agent):
+        """No source and no meta_url — source stays absent."""
+        results = [
+            {"title": "Story", "url": "https://x.com/1"},
+        ]
+        normalized = agent._normalize_brave_results(results)
+        assert not normalized[0].get("source")
+
 
 def test_brave_published_at_round_trips(agent, db_engine):
     """Brave results with age field end up with published_at in the DB."""
