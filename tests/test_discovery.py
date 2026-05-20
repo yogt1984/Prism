@@ -710,3 +710,114 @@ def test_run_discovery_prefers_larger_clusters(agent, db_engine):
         assert len(clusters) == 2
         # The 2-article Fed cluster should be first (largest)
         assert clusters[0].article_count == 2
+
+
+# --- T9.1: Cross-cycle merge after analysis rewrites headline ---
+
+def test_cross_cycle_merge_after_analysis_rewrite(agent, db_engine):
+    """Merge still works when A_AI has rewritten the cluster headline.
+
+    This is the core bug: after analysis, cluster.headline is Claude's
+    neutral rephrasing which has low Jaccard similarity to raw article
+    titles. The fix compares against stored article titles too.
+    """
+    with Session(db_engine) as s:
+        source = Source(name="Reuters", url="reuters.com")
+        s.add(source)
+        s.commit()
+
+        # Simulate a cluster that has already been analyzed
+        cluster = StoryCluster(
+            headline="Federal Reserve maintains benchmark rate amid persistent inflation",
+            article_count=1,
+            status=StoryStatus.ANALYZED,
+            first_seen=datetime.now(UTC) - timedelta(hours=3),
+        )
+        s.add(cluster)
+        s.commit()
+
+        # The original article title is very different from Claude's headline
+        s.add(Article(
+            cluster_id=cluster.id, source_id=source.id,
+            title="Fed holds rates steady at May meeting",
+            url="https://reuters.com/fed-may",
+        ))
+        s.commit()
+        old_id = cluster.id
+
+    # New article with title similar to the ORIGINAL article, not the rewritten headline
+    new_articles = [
+        {"title": "Fed holds interest rates steady at latest meeting",
+         "url": "https://apnews.com/fed-steady", "source": "AP",
+         "description": "The Federal Reserve held rates..."},
+    ]
+    result = agent.store_cluster(new_articles, db_engine)
+    assert result is not None
+    assert result.id == old_id, "Should merge into existing cluster via article title match"
+    assert result.article_count == 2
+
+
+def test_cross_cycle_merge_still_works_on_headline(agent, db_engine):
+    """Pre-analysis clusters (headline = raw title) still merge normally."""
+    with Session(db_engine) as s:
+        source = Source(name="Reuters", url="reuters.com")
+        s.add(source)
+        s.commit()
+
+        cluster = StoryCluster(
+            headline="Fed holds rates steady at May meeting",
+            article_count=1,
+            status=StoryStatus.RAW,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        s.add(cluster)
+        s.commit()
+        s.add(Article(
+            cluster_id=cluster.id, source_id=source.id,
+            title="Fed holds rates steady at May meeting",
+            url="https://reuters.com/fed-1",
+        ))
+        s.commit()
+        old_id = cluster.id
+
+    new_articles = [
+        {"title": "Fed holds interest rates steady at May meeting today",
+         "url": "https://bbc.com/fed", "source": "BBC",
+         "description": "d"},
+    ]
+    result = agent.store_cluster(new_articles, db_engine)
+    assert result is not None
+    assert result.id == old_id
+
+
+def test_cross_cycle_no_false_merge_on_unrelated_articles(agent, db_engine):
+    """Unrelated articles in a cluster don't cause false merges."""
+    with Session(db_engine) as s:
+        source = Source(name="Reuters", url="reuters.com")
+        s.add(source)
+        s.commit()
+
+        cluster = StoryCluster(
+            headline="Markets overview and economic indicators",
+            article_count=1,
+            first_seen=datetime.now(UTC) - timedelta(hours=2),
+        )
+        s.add(cluster)
+        s.commit()
+        s.add(Article(
+            cluster_id=cluster.id, source_id=source.id,
+            title="Stock market closes higher on earnings",
+            url="https://reuters.com/stocks",
+        ))
+        s.commit()
+        old_id = cluster.id
+
+    # Completely unrelated article
+    new_articles = [
+        {"title": "Hurricane warning issued for coastal areas",
+         "url": "https://weather.com/hurricane", "source": "Weather",
+         "description": "d"},
+    ]
+    result = agent.store_cluster(new_articles, db_engine)
+    assert result is not None
+    assert result.id != old_id, "Unrelated article should create a new cluster"

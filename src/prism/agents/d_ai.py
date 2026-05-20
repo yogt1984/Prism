@@ -129,14 +129,35 @@ class DiscoveryAgent:
     def _find_existing_cluster(
         self, session: Session, title: str,
     ) -> StoryCluster | None:
-        """Check if a matching cluster from the last 24h already exists."""
+        """Check if a matching cluster from the last 24h already exists.
+
+        Compares against both cluster headlines AND article titles so that
+        merges still work after A_AI rewrites the headline.
+        """
         cutoff = datetime.now(UTC) - timedelta(hours=24)
         recent = session.exec(
             select(StoryCluster).where(StoryCluster.first_seen >= cutoff)
         ).all()
+        if not recent:
+            return None
+
+        # Bulk-load article titles for all recent clusters
+        cluster_ids = [c.id for c in recent]
+        art_rows = session.exec(
+            select(Article.cluster_id, Article.title).where(
+                Article.cluster_id.in_(cluster_ids),  # type: ignore[union-attr]
+            )
+        ).all()
+        titles_by_cluster: dict[int, list[str]] = {}
+        for cid, art_title in art_rows:
+            titles_by_cluster.setdefault(cid, []).append(art_title)
+
         for cluster in recent:
             if self._jaccard(title, cluster.headline) >= 0.6:
                 return cluster
+            for art_title in titles_by_cluster.get(cluster.id, []):
+                if self._jaccard(title, art_title) >= 0.6:
+                    return cluster
         return None
 
     def store_cluster(
