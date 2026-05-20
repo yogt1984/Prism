@@ -16,6 +16,7 @@ from prism.db import init_db
 from prism.main import analysis_cycle, briefing_cycle, discovery_cycle
 from prism.models import (
     Briefing,
+    Engagement,
     Perspective,
     StoryCluster,
     StoryStatus,
@@ -269,3 +270,65 @@ def test_e2e_state_machine_no_reprocessing(db_engine):
         mock_client = mock_anthropic.return_value
         analysis_cycle(db_engine)
         assert mock_client.messages.create.call_count == 0
+
+
+def test_e2e_no_repeat_stories_across_cycles(db_engine):
+    """Second briefing cycle excludes stories delivered in the first cycle."""
+    seed_sources(db_engine)
+    with Session(db_engine, expire_on_commit=False) as s:
+        user = User(
+            email="repeat@test.com",
+            interests="finance,technology",
+            briefing_depth=10,
+        )
+        s.add(user)
+        s.commit()
+
+    # --- Discovery + Analysis ---
+    with patch("prism.agents.d_ai.httpx.Client") as mock_http_cls:
+        mock_http = mock_http_cls.return_value
+        mock_http.get.return_value = _mock_brave_response()
+        with patch("prism.agents.d_ai.feedparser.parse") as mock_fp:
+            mock_fp.return_value = MagicMock(entries=[], bozo=False)
+            discovery_cycle(db_engine)
+
+    with patch("prism.agents.a_ai.anthropic.Anthropic") as mock_anthropic:
+        mock_client = mock_anthropic.return_value
+        mock_client.messages.create.side_effect = _mock_analysis_responses()
+        analysis_cycle(db_engine)
+
+    # Count analyzed clusters
+    with Session(db_engine) as s:
+        analyzed = s.exec(
+            select(StoryCluster).where(StoryCluster.status == StoryStatus.ANALYZED)
+        ).all()
+        n_clusters = len(analyzed)
+        assert n_clusters >= 1
+
+    # --- First briefing cycle ---
+    mock_briefing_msg = MagicMock()
+    mock_briefing_msg.content = [MagicMock(text=BRIEFING_HTML)]
+
+    with patch("prism.agents.w_ai.anthropic.Anthropic") as mock_anthropic:
+        mock_client = mock_anthropic.return_value
+        mock_client.messages.create.return_value = mock_briefing_msg
+        with patch("prism.agents.w_ai.resend"):
+            briefing_cycle(db_engine)
+
+    # Verify engagement records were created
+    with Session(db_engine) as s:
+        engagements = s.exec(select(Engagement)).all()
+        assert len(engagements) == n_clusters
+        assert all(e.action == "delivered" for e in engagements)
+
+    # --- Second briefing cycle (no new stories) ---
+    with patch("prism.agents.w_ai.anthropic.Anthropic") as mock_anthropic:
+        mock_client = mock_anthropic.return_value
+        mock_client.messages.create.return_value = mock_briefing_msg
+        with patch("prism.agents.w_ai.resend"):
+            briefing_cycle(db_engine)
+
+    # Second cycle should not produce a new briefing (all stories already delivered)
+    with Session(db_engine) as s:
+        briefings = s.exec(select(Briefing)).all()
+        assert len(briefings) == 1, "Only one briefing — second cycle had no new stories"

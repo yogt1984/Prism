@@ -49,7 +49,12 @@ def briefing_cycle(engine: Engine | None = None) -> None:
         users = p_ai.get_all_users(e)
         for user in users:
             clusters = p_ai.select_stories(user, e)
-            w_ai.create_and_send(user, clusters, e)
+            briefing = w_ai.create_and_send(user, clusters, e)
+            if briefing and briefing.sent:
+                for cluster in clusters:
+                    p_ai.record_engagement(
+                        user.id, cluster.id, "delivered", engine=e,  # type: ignore[arg-type]
+                    )
     except Exception as exc:
         logger.exception("Briefing cycle failed")
         send_alert(f"Briefing cycle failed: {exc}", level=AlertLevel.ERROR)

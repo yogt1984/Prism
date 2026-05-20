@@ -4,11 +4,14 @@ Covers job registration, interval configuration, and signal shutdown.
 """
 
 import signal
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from prism.db import init_db
 from prism.main import briefing_cycle, build_scheduler
 
 
@@ -87,3 +90,96 @@ def test_briefing_cycle_iterates_users():
             assert mock_p.get_all_users.call_count == 1
             assert mock_p.select_stories.call_count == 2
             assert mock_w.create_and_send.call_count == 2
+
+
+# --- T8.6: Feedback loop — engagement after briefing ---
+
+@pytest.fixture()
+def db_engine(tmp_path: Path):
+    url = f"sqlite:///{tmp_path / 'test.db'}"
+    engine = init_db(url)
+    yield engine
+    engine.dispose()
+
+
+def test_briefing_cycle_records_engagement(db_engine):
+    """After a sent briefing, engagement is recorded for each delivered cluster."""
+    from sqlmodel import Session
+
+    from prism.models import StoryCluster, StoryStatus, User
+
+    with Session(db_engine) as s:
+        user = User(id=1, email="a@t.com", interests="finance")
+        s.add(user)
+        c1 = StoryCluster(id=10, headline="Story A", status=StoryStatus.ANALYZED,
+                          article_count=1)
+        c2 = StoryCluster(id=20, headline="Story B", status=StoryStatus.ANALYZED,
+                          article_count=1)
+        s.add(c1)
+        s.add(c2)
+        s.commit()
+
+    mock_briefing = MagicMock()
+    mock_briefing.sent = True
+
+    with patch("prism.main.PersonalizationAgent") as mock_p_cls:
+        with patch("prism.main.WriterAgent") as mock_w_cls:
+            mock_p = mock_p_cls.return_value
+            mock_w = mock_w_cls.return_value
+            mock_p.get_all_users.return_value = [
+                User(id=1, email="a@t.com", interests="finance"),
+            ]
+            mock_p.select_stories.return_value = [
+                StoryCluster(id=10, headline="Story A"),
+                StoryCluster(id=20, headline="Story B"),
+            ]
+            mock_w.create_and_send.return_value = mock_briefing
+
+            briefing_cycle(db_engine)
+
+            # record_engagement called for each cluster
+            assert mock_p.record_engagement.call_count == 2
+            calls = mock_p.record_engagement.call_args_list
+            cluster_ids = {c.kwargs.get("cluster_id", c[0][1]) for c in calls}
+            assert cluster_ids == {10, 20}
+
+
+def test_briefing_cycle_no_engagement_when_unsent(db_engine):
+    """If briefing is not sent, no engagement is recorded."""
+    from prism.models import User
+
+    mock_briefing = MagicMock()
+    mock_briefing.sent = False
+
+    with patch("prism.main.PersonalizationAgent") as mock_p_cls:
+        with patch("prism.main.WriterAgent") as mock_w_cls:
+            mock_p = mock_p_cls.return_value
+            mock_w = mock_w_cls.return_value
+            mock_p.get_all_users.return_value = [
+                User(id=1, email="a@t.com", interests="finance"),
+            ]
+            mock_p.select_stories.return_value = [MagicMock(id=10)]
+            mock_w.create_and_send.return_value = mock_briefing
+
+            briefing_cycle(db_engine)
+
+            mock_p.record_engagement.assert_not_called()
+
+
+def test_briefing_cycle_no_engagement_when_no_stories(db_engine):
+    """If no stories selected, create_and_send returns None — no engagement."""
+    from prism.models import User
+
+    with patch("prism.main.PersonalizationAgent") as mock_p_cls:
+        with patch("prism.main.WriterAgent") as mock_w_cls:
+            mock_p = mock_p_cls.return_value
+            mock_w = mock_w_cls.return_value
+            mock_p.get_all_users.return_value = [
+                User(id=1, email="a@t.com", interests="finance"),
+            ]
+            mock_p.select_stories.return_value = []
+            mock_w.create_and_send.return_value = None
+
+            briefing_cycle(db_engine)
+
+            mock_p.record_engagement.assert_not_called()
