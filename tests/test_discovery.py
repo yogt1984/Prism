@@ -821,3 +821,47 @@ def test_cross_cycle_no_false_merge_on_unrelated_articles(agent, db_engine):
     result = agent.store_cluster(new_articles, db_engine)
     assert result is not None
     assert result.id != old_id, "Unrelated article should create a new cluster"
+
+
+# --- T9.5: Zero-result alerting ---
+
+def test_run_discovery_alerts_on_zero_articles(agent, db_engine):
+    """Alert fired when both Brave and RSS return nothing."""
+    agent.search_brave = MagicMock(return_value=[])
+    agent.fetch_rss_sources = MagicMock(return_value=[])
+
+    with patch("prism.agents.d_ai.send_alert") as mock_alert:
+        agent.run_discovery(queries=["test"], engine=db_engine)
+
+    mock_alert.assert_called_once()
+    assert "zero articles" in mock_alert.call_args[0][0].lower()
+
+
+def test_run_discovery_alerts_on_zero_stored(agent, db_engine):
+    """Alert fired when articles found but store_cluster returns None for all."""
+    agent.search_brave = MagicMock(return_value=[
+        {"title": "Story", "url": "https://a.com/1",
+         "description": "d", "source": "A"},
+    ])
+    agent.fetch_rss_sources = MagicMock(return_value=[])
+    agent.store_cluster = MagicMock(return_value=None)
+
+    with patch("prism.agents.d_ai.send_alert") as mock_alert:
+        agent.run_discovery(queries=["test"], engine=db_engine)
+
+    mock_alert.assert_called_once()
+    assert "stored 0" in mock_alert.call_args[0][0].lower()
+
+
+def test_run_discovery_no_alert_on_success(agent, db_engine):
+    """No alert when discovery stores clusters normally."""
+    agent.search_brave = MagicMock(return_value=[
+        {"title": "Fresh story", "url": "https://a.com/1",
+         "description": "d", "source": "A"},
+    ])
+    agent.fetch_rss_sources = MagicMock(return_value=[])
+
+    with patch("prism.agents.d_ai.send_alert") as mock_alert:
+        agent.run_discovery(queries=["test"], engine=db_engine)
+
+    mock_alert.assert_not_called()

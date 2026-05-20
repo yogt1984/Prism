@@ -15,6 +15,7 @@ import httpx
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
+from prism.alerts import AlertLevel, send_alert
 from prism.config import settings
 from prism.db import get_engine, get_session
 from prism.models import Article, Source, StoryCluster, StoryStatus
@@ -304,6 +305,17 @@ class DiscoveryAgent:
             cluster = self.store_cluster(cluster_articles, engine)
             if cluster:
                 stored += 1
+
+        if not all_articles:
+            send_alert(
+                "Discovery cycle returned zero articles from all sources",
+                level=AlertLevel.WARNING,
+            )
+        elif stored == 0:
+            send_alert(
+                f"Discovery cycle found {len(all_articles)} articles but stored 0 new clusters",
+                level=AlertLevel.WARNING,
+            )
 
         logger.info(
             "Discovery cycle complete. Stored %d clusters from %d articles.",
