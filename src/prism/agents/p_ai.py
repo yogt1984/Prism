@@ -78,10 +78,23 @@ class PersonalizationAgent:
 
             # Score, filter seen, sort
             candidates = [c for c in clusters if c.id not in seen_ids]
+
+            # Tier enforcement: free users limited to first interest category
+            if not user.is_pro and user.interests:
+                allowed_cat = user.interests.split(",")[0].strip()
+                candidates = [
+                    c for c in candidates
+                    if allowed_cat in (c.categories or "").split(",")
+                ]
+
             scored = [(self.score_story(c, user), c) for c in candidates]
             scored.sort(key=lambda x: x[0], reverse=True)
 
             limit = user.briefing_depth or settings.default_briefing_stories
+            if not user.is_pro:
+                limit = min(limit, settings.default_briefing_stories)
+            else:
+                limit = min(limit, settings.max_briefing_stories)
             selected = [cluster for _, cluster in scored[:limit]]
 
             logger.info("Selected %d stories for user %s (from %d candidates)",

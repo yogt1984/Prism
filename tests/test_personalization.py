@@ -144,3 +144,104 @@ def test_record_engagement_excludes_from_selection(db_engine):
     # After engagement, story is excluded
     stories_after = p_ai.select_stories(user, engine=db_engine)
     assert all(c.id != cid for c in stories_after)
+
+
+# --- T9.2: Tier enforcement in P_AI ---
+
+def _seed_multi_category(session: Session) -> list[StoryCluster]:
+    """Create clusters across several categories."""
+    clusters = []
+    for i, cat in enumerate(["finance", "sports", "technology", "politics"]):
+        c = StoryCluster(
+            headline=f"{cat} story {i}",
+            categories=cat,
+            status=StoryStatus.ANALYZED,
+            article_count=2,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        session.add(c)
+        clusters.append(c)
+    session.commit()
+    for c in clusters:
+        session.refresh(c)
+    return clusters
+
+
+def test_free_user_limited_to_first_interest(db_engine):
+    """Free users only see stories matching their first interest category."""
+    p_ai = PersonalizationAgent()
+    with Session(db_engine) as s:
+        _seed_multi_category(s)
+        user = User(
+            id=1, email="free@test.com",
+            interests="finance,sports", is_pro=False,
+        )
+        s.add(user)
+        s.commit()
+
+    detached = User(id=1, email="free@test.com", interests="finance,sports", is_pro=False)
+    stories = p_ai.select_stories(detached, engine=db_engine)
+    cats = {c.categories for c in stories}
+    assert cats == {"finance"}, f"Free user should only get first interest, got {cats}"
+
+
+def test_pro_user_gets_all_interests(db_engine):
+    """Pro users see stories from all their interest categories."""
+    p_ai = PersonalizationAgent()
+    with Session(db_engine) as s:
+        _seed_multi_category(s)
+        user = User(
+            id=1, email="pro@test.com",
+            interests="finance,sports", is_pro=True,
+        )
+        s.add(user)
+        s.commit()
+
+    detached = User(id=1, email="pro@test.com", interests="finance,sports", is_pro=True)
+    stories = p_ai.select_stories(detached, engine=db_engine)
+    cats = {c.categories for c in stories}
+    assert "finance" in cats
+    assert "sports" in cats
+
+
+def test_free_user_capped_at_default_stories(db_engine):
+    """Free users capped at default_briefing_stories even if briefing_depth is higher."""
+    p_ai = PersonalizationAgent()
+    with Session(db_engine) as s:
+        # Create 15 finance clusters
+        for i in range(15):
+            s.add(StoryCluster(
+                headline=f"Finance story {i}", categories="finance",
+                status=StoryStatus.ANALYZED, article_count=2,
+                first_seen=datetime.now(UTC) - timedelta(hours=1),
+            ))
+        s.commit()
+
+    detached = User(
+        id=1, email="free@test.com", interests="finance",
+        is_pro=False, briefing_depth=25,
+    )
+    stories = p_ai.select_stories(detached, engine=db_engine)
+    # default_briefing_stories = 10
+    assert len(stories) <= 10
+
+
+def test_pro_user_gets_up_to_max_stories(db_engine):
+    """Pro users can get up to max_briefing_stories."""
+    p_ai = PersonalizationAgent()
+    with Session(db_engine) as s:
+        for i in range(30):
+            s.add(StoryCluster(
+                headline=f"Story {i}", categories="finance",
+                status=StoryStatus.ANALYZED, article_count=2,
+                first_seen=datetime.now(UTC) - timedelta(hours=1),
+            ))
+        s.commit()
+
+    detached = User(
+        id=1, email="pro@test.com", interests="finance",
+        is_pro=True, briefing_depth=30,
+    )
+    stories = p_ai.select_stories(detached, engine=db_engine)
+    # max_briefing_stories = 25
+    assert len(stories) <= 25

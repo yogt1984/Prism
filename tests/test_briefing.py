@@ -152,7 +152,7 @@ def test_select_respects_briefing_depth(db_engine):
     p_ai = PersonalizationAgent()
     with Session(db_engine, expire_on_commit=False) as s:
         _seed_analyzed_clusters(s, n=10, age_hours=2.0)
-        user = User(email="bob@test.com", interests="finance", briefing_depth=3)
+        user = User(email="bob@test.com", interests="finance", briefing_depth=3, is_pro=True)
         s.add(user)
         s.commit()
 
@@ -401,13 +401,13 @@ def test_briefing_skipped_no_stories(db_engine):
 # --- T8.7: Non-email format handling ---
 
 def test_audio_script_stored_not_sent(db_engine, caplog):
-    """AUDIO_SCRIPT briefing is stored but not delivered; skip is logged."""
+    """Pro user with AUDIO_SCRIPT: stored but not delivered; skip is logged."""
     agent = _make_mock_writer()
     with Session(db_engine, expire_on_commit=False) as s:
         clusters = _seed_analyzed_clusters(s, n=1)
         user = User(
             email="audio@test.com", interests="finance",
-            preferred_format=BriefingFormat.AUDIO_SCRIPT,
+            preferred_format=BriefingFormat.AUDIO_SCRIPT, is_pro=True,
         )
         s.add(user)
         s.commit()
@@ -426,13 +426,13 @@ def test_audio_script_stored_not_sent(db_engine, caplog):
 
 
 def test_json_feed_stored_not_sent(db_engine, caplog):
-    """JSON_FEED briefing is stored but not delivered; skip is logged."""
+    """Pro user with JSON_FEED: stored but not delivered; skip is logged."""
     agent = _make_mock_writer()
     with Session(db_engine, expire_on_commit=False) as s:
         clusters = _seed_analyzed_clusters(s, n=1)
         user = User(
             email="json@test.com", interests="finance",
-            preferred_format=BriefingFormat.JSON_FEED,
+            preferred_format=BriefingFormat.JSON_FEED, is_pro=True,
         )
         s.add(user)
         s.commit()
@@ -446,3 +446,30 @@ def test_json_feed_stored_not_sent(db_engine, caplog):
         assert stored.sent is False
     assert "Skipping delivery" in caplog.text
     assert "json_feed" in caplog.text
+
+
+# --- T9.2: Tier enforcement in W_AI ---
+
+def test_free_user_format_falls_back_to_email(db_engine, caplog):
+    """Free user requesting AUDIO_SCRIPT gets email instead."""
+    agent = _make_mock_writer()
+    with Session(db_engine, expire_on_commit=False) as s:
+        clusters = _seed_analyzed_clusters(s, n=1)
+        user = User(
+            email="freeaudio@test.com", interests="finance",
+            preferred_format=BriefingFormat.AUDIO_SCRIPT, is_pro=False,
+        )
+        s.add(user)
+        s.commit()
+
+    with patch("prism.agents.w_ai.resend"):
+        with caplog.at_level(logging.INFO):
+            briefing = agent.create_and_send(user, clusters, db_engine)
+
+    assert briefing is not None
+    with Session(db_engine) as s:
+        stored = s.get(Briefing, briefing.id)
+        # Should be sent as email, not stored as text
+        assert stored.content_html != ""
+        assert stored.sent is True
+    assert "falling back to email" in caplog.text

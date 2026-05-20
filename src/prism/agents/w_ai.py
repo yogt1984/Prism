@@ -141,14 +141,23 @@ class WriterAgent:
             logger.info("No stories for user %s, skipping", user.email)
             return None
 
+        # Tier enforcement: free users always get email format
+        fmt = user.preferred_format
+        if not user.is_pro and fmt != BriefingFormat.EMAIL:
+            logger.info(
+                "Free user %s requested %s, falling back to email",
+                user.email, fmt,
+            )
+            fmt = BriefingFormat.EMAIL
+
         e = engine or get_engine()
         content = self.generate_briefing(user, clusters, e)
 
         with Session(e) as session:
             briefing = Briefing(
                 user_id=user.id,  # type: ignore[arg-type]
-                content_html=content if user.preferred_format == BriefingFormat.EMAIL else "",
-                content_text=content if user.preferred_format != BriefingFormat.EMAIL else "",
+                content_html=content if fmt == BriefingFormat.EMAIL else "",
+                content_text=content if fmt != BriefingFormat.EMAIL else "",
                 story_count=len(clusters),
             )
             session.add(briefing)
@@ -156,7 +165,7 @@ class WriterAgent:
             session.refresh(briefing)
 
             # Deliver
-            if user.preferred_format == BriefingFormat.EMAIL:
+            if fmt == BriefingFormat.EMAIL:
                 sent = self.send_email(user, content)
                 if sent:
                     briefing.sent = True
@@ -166,7 +175,7 @@ class WriterAgent:
             else:
                 logger.info(
                     "Skipping delivery for user %s (format=%s, not yet supported)",
-                    user.email, user.preferred_format,
+                    user.email, fmt,
                 )
 
             logger.info("Created briefing %d for user %s (%d stories)",
