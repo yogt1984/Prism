@@ -402,3 +402,86 @@ def test_process_pending_delays_calls(db_engine):
 
     # sleep(1) called between the two clusters
     mock_sleep.assert_called_with(1)
+
+
+# --- T8.4: Sort articles by source trust, not source_id ---
+
+def test_analyze_cluster_sorts_by_trust(db_engine):
+    """Articles from higher-trust sources appear first in the Claude prompt."""
+    agent = _make_mock_agent()
+
+    with Session(db_engine) as s:
+        low_trust = Source(name="Tabloid", url="tabloid.com", trust_score=0.2)
+        high_trust = Source(name="Reuters", url="reuters.com", trust_score=0.95)
+        s.add(low_trust)
+        s.add(high_trust)
+        s.commit()
+
+        cluster = StoryCluster(headline="Test", article_count=2)
+        s.add(cluster)
+        s.commit()
+
+        # Low-trust article has lower source_id (created first)
+        s.add(Article(
+            cluster_id=cluster.id, source_id=low_trust.id,
+            title="Tabloid take", url="https://tabloid.com/1",
+            snippet="Low trust content",
+        ))
+        s.add(Article(
+            cluster_id=cluster.id, source_id=high_trust.id,
+            title="Reuters report", url="https://reuters.com/1",
+            snippet="High trust content",
+        ))
+        s.commit()
+        cluster_id = cluster.id
+
+    agent.analyze_cluster(cluster_id, db_engine)
+
+    # Check the prompt sent to Claude — high-trust article should come first
+    call_args = agent.client.messages.create.call_args
+    prompt = call_args.kwargs["messages"][0]["content"]
+    reuters_pos = prompt.index("Reuters report")
+    tabloid_pos = prompt.index("Tabloid take")
+    assert reuters_pos < tabloid_pos, "High-trust articles should appear before low-trust"
+
+
+def test_analyze_cluster_caps_at_15_by_trust(db_engine):
+    """When >15 articles, only the 15 highest-trust are sent to Claude."""
+    agent = _make_mock_agent()
+
+    with Session(db_engine) as s:
+        sources = []
+        for i in range(20):
+            src = Source(
+                name=f"Source-{i}", url=f"source{i}.com",
+                trust_score=i / 20,  # 0.0 to 0.95
+            )
+            s.add(src)
+            sources.append(src)
+        s.commit()
+
+        cluster = StoryCluster(headline="Big story", article_count=20)
+        s.add(cluster)
+        s.commit()
+
+        for i, src in enumerate(sources):
+            s.add(Article(
+                cluster_id=cluster.id, source_id=src.id,
+                title=f"Article-src{i:02d}", url=f"https://s{i}.com/1",
+                snippet=f"Content from source {i}",
+            ))
+        s.commit()
+        cluster_id = cluster.id
+
+    agent.analyze_cluster(cluster_id, db_engine)
+
+    # The 5 lowest-trust sources (0-4) should be excluded from the prompt
+    call_args = agent.client.messages.create.call_args
+    prompt = call_args.kwargs["messages"][0]["content"]
+    for i in range(5):
+        assert f"Article-src{i:02d}" not in prompt, (
+            f"Source-{i} (trust={i/20:.2f}) should have been excluded"
+        )
+    # The highest-trust sources should be included
+    for i in range(15, 20):
+        assert f"Article-src{i:02d}" in prompt

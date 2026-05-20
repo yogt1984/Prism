@@ -126,9 +126,18 @@ class AnalysisAgent:
                 )
                 return
 
-            # Keep top 15 articles (by source_id as proxy for trust)
+            # Keep top 15 articles, prioritizing higher-trust sources
+            source_ids = {a.source_id for a in articles}
+            trust_map = {
+                s.id: s.trust_score
+                for s in session.exec(
+                    select(Source).where(Source.id.in_(source_ids))  # type: ignore[union-attr]
+                ).all()
+            }
             sorted_articles = sorted(
-                articles, key=lambda a: a.source_id,
+                articles,
+                key=lambda a: trust_map.get(a.source_id, 0.0),
+                reverse=True,
             )[:15]
 
             articles_data = [
