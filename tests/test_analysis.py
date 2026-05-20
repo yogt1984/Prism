@@ -485,3 +485,41 @@ def test_analyze_cluster_caps_at_15_by_trust(db_engine):
     # The highest-trust sources should be included
     for i in range(15, 20):
         assert f"Article-src{i:02d}" in prompt
+
+
+# --- T9.4: Enforce max_perspectives_per_story ---
+
+def test_perspectives_capped_at_config_limit(db_engine):
+    """Claude returns 8 perspectives but only max_perspectives_per_story are stored."""
+    agent = _make_mock_agent()
+
+    many_perspectives = [
+        {
+            "source_name": f"Outlet-{i}",
+            "source_id": 1,
+            "summary": f"Perspective from outlet {i}",
+            "sentiment": 0.1 * i,
+            "bias_label": "center",
+            "key_claims": [f"Claim {i} (Source: Outlet-{i})"],
+        }
+        for i in range(8)
+    ]
+    response = {**MOCK_ANALYSIS_RESPONSE, "perspectives": many_perspectives}
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text=json.dumps(response))]
+    agent.client.messages.create.return_value = mock_msg
+
+    with Session(db_engine) as s:
+        cluster = _seed_cluster(s)
+        cluster_id = cluster.id
+
+    agent.analyze_cluster(cluster_id, db_engine)
+
+    with Session(db_engine) as s:
+        stored = s.exec(select(Perspective)).all()
+        # max_perspectives_per_story = 5
+        assert len(stored) == 5
+        # First 5 perspectives should be kept (order preserved)
+        summaries = [p.summary for p in stored]
+        assert summaries[0] == "Perspective from outlet 0"
+        assert summaries[4] == "Perspective from outlet 4"

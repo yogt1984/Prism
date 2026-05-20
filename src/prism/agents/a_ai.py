@@ -174,8 +174,10 @@ class AnalysisAgent:
             cluster.categories = ",".join(result.get("categories", []))
             cluster.status = StoryStatus.ANALYZED
 
-            # Store perspectives
-            for p in result.get("perspectives", []):
+            # Store perspectives (capped to config limit)
+            perspectives_raw = result.get("perspectives", [])
+            perspectives_raw = perspectives_raw[:settings.max_perspectives_per_story]
+            for p in perspectives_raw:
                 # Validate source_id exists
                 sid = p.get("source_id", articles[0].source_id)
                 if session.get(Source, sid) is None:
