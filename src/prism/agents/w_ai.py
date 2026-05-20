@@ -163,6 +163,11 @@ class WriterAgent:
                     briefing.sent_at = datetime.now(UTC)
                     session.add(briefing)
                     session.commit()
+            else:
+                logger.info(
+                    "Skipping delivery for user %s (format=%s, not yet supported)",
+                    user.email, user.preferred_format,
+                )
 
             logger.info("Created briefing %d for user %s (%d stories)",
                         briefing.id, user.email, len(clusters))

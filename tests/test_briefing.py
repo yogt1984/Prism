@@ -396,3 +396,53 @@ def test_briefing_skipped_no_stories(db_engine):
     with Session(db_engine) as s:
         count = len(s.exec(select(Briefing)).all())
         assert count == 0
+
+
+# --- T8.7: Non-email format handling ---
+
+def test_audio_script_stored_not_sent(db_engine, caplog):
+    """AUDIO_SCRIPT briefing is stored but not delivered; skip is logged."""
+    agent = _make_mock_writer()
+    with Session(db_engine, expire_on_commit=False) as s:
+        clusters = _seed_analyzed_clusters(s, n=1)
+        user = User(
+            email="audio@test.com", interests="finance",
+            preferred_format=BriefingFormat.AUDIO_SCRIPT,
+        )
+        s.add(user)
+        s.commit()
+
+    with caplog.at_level(logging.INFO):
+        briefing = agent.create_and_send(user, clusters, db_engine)
+
+    assert briefing is not None
+    with Session(db_engine) as s:
+        stored = s.get(Briefing, briefing.id)
+        assert stored.sent is False
+        assert stored.content_text != ""
+        assert stored.content_html == ""
+    assert "Skipping delivery" in caplog.text
+    assert "audio_script" in caplog.text
+
+
+def test_json_feed_stored_not_sent(db_engine, caplog):
+    """JSON_FEED briefing is stored but not delivered; skip is logged."""
+    agent = _make_mock_writer()
+    with Session(db_engine, expire_on_commit=False) as s:
+        clusters = _seed_analyzed_clusters(s, n=1)
+        user = User(
+            email="json@test.com", interests="finance",
+            preferred_format=BriefingFormat.JSON_FEED,
+        )
+        s.add(user)
+        s.commit()
+
+    with caplog.at_level(logging.INFO):
+        briefing = agent.create_and_send(user, clusters, db_engine)
+
+    assert briefing is not None
+    with Session(db_engine) as s:
+        stored = s.get(Briefing, briefing.id)
+        assert stored.sent is False
+    assert "Skipping delivery" in caplog.text
+    assert "json_feed" in caplog.text

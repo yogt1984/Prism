@@ -332,3 +332,66 @@ def test_e2e_no_repeat_stories_across_cycles(db_engine):
     with Session(db_engine) as s:
         briefings = s.exec(select(Briefing)).all()
         assert len(briefings) == 1, "Only one briefing — second cycle had no new stories"
+
+
+def test_e2e_analysis_uses_source_trust(db_engine):
+    """Analysis prompt prioritizes articles from higher-trust sources."""
+    from prism.models import Article, Source
+
+    # Seed sources with distinct trust scores
+    with Session(db_engine) as s:
+        low = Source(name="Tabloid", url="tabloid.com", trust_score=0.1)
+        high = Source(name="AP News", url="apnews.com", trust_score=0.95)
+        s.add(low)
+        s.add(high)
+        s.commit()
+        s.refresh(low)
+        s.refresh(high)
+        high_id = high.id
+
+        cluster = StoryCluster(
+            headline="Test event", article_count=2, status=StoryStatus.RAW,
+        )
+        s.add(cluster)
+        s.commit()
+        s.refresh(cluster)
+
+        # Low-trust source has lower id (created first)
+        s.add(Article(
+            cluster_id=cluster.id, source_id=low.id,
+            title="Tabloid hot take", url="https://tabloid.com/1",
+            snippet="Sensational coverage",
+        ))
+        s.add(Article(
+            cluster_id=cluster.id, source_id=high.id,
+            title="AP factual report", url="https://apnews.com/1",
+            snippet="Balanced factual coverage",
+        ))
+        s.commit()
+
+    # Run analysis — capture the prompt sent to Claude
+    analysis_response = {
+        "headline": "Test event headline",
+        "summary": "Summary of the test event.",
+        "categories": ["world"],
+        "perspectives": [{
+            "source_name": "AP News", "source_id": high_id,
+            "summary": "AP perspective", "sentiment": 0.0,
+            "bias_label": "center",
+            "key_claims": ["Fact (Source: AP News)"],
+        }],
+    }
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text=json.dumps(analysis_response))]
+
+    with patch("prism.agents.a_ai.anthropic.Anthropic") as mock_anthropic:
+        mock_client = mock_anthropic.return_value
+        mock_client.messages.create.return_value = mock_msg
+        analysis_cycle(db_engine)
+
+    # Verify high-trust article appears before low-trust in the prompt
+    call_args = mock_client.messages.create.call_args
+    prompt = call_args.kwargs["messages"][0]["content"]
+    ap_pos = prompt.index("AP factual report")
+    tabloid_pos = prompt.index("Tabloid hot take")
+    assert ap_pos < tabloid_pos, "High-trust AP should appear before low-trust Tabloid"
