@@ -16,6 +16,7 @@ from prism.cli._fmt import (
 from prism.cli.briefing import app as briefing_app
 from prism.cli.config_cmd import app as config_app
 from prism.cli.cycle import app as cycle_app
+from prism.cli.db_cmd import app as db_app
 from prism.cli.docs import app as docs_app
 from prism.cli.run import app as run_app
 from prism.cli.source import app as source_app
@@ -38,6 +39,7 @@ app.add_typer(user_app, name="user")
 app.add_typer(source_app, name="source")
 app.add_typer(story_app, name="story")
 app.add_typer(briefing_app, name="briefing")
+app.add_typer(db_app, name="db")
 app.add_typer(docs_app, name="docs")
 
 
