@@ -1,4 +1,4 @@
-"""Prism API routes — health, config, sources, stories, and users."""
+"""Prism API routes — health, config, sources, stories, users, and engagements."""
 
 from datetime import datetime
 from typing import Annotated
@@ -13,6 +13,7 @@ from prism.models import (
     Briefing,
     BriefingFormat,
     Category,
+    Engagement,
     Perspective,
     Source,
     StoryCluster,
@@ -157,6 +158,27 @@ class BriefingOut(BaseModel):
 class BriefingDetailOut(BriefingOut):
     content_html: str
     content_text: str
+
+
+_VALID_ACTIONS = {"open", "read", "save", "skip"}
+
+
+class EngagementCreate(BaseModel):
+    user_id: int
+    cluster_id: int
+    action: str
+    read_time_sec: int = 0
+
+
+class EngagementOut(BaseModel):
+    id: int
+    user_id: int
+    cluster_id: int
+    action: str
+    read_time_sec: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────
@@ -414,3 +436,50 @@ def trigger_briefing(
         )
 
     return BriefingDetailOut.model_validate(briefing)
+
+
+# ── Engagements ───────────────────────────────────────────────────────
+
+
+@router.post("/engagements", response_model=EngagementOut, status_code=201)
+def create_engagement(
+    body: EngagementCreate,
+    session: Session = Depends(_get_session),
+) -> EngagementOut:
+    """Record a user engagement event (open/read/save/skip)."""
+    # Validate user exists
+    user = session.get(User, body.user_id)
+    if user is None:
+        raise HTTPException(status_code=422, detail="User not found")
+
+    # Validate cluster exists
+    cluster = session.get(StoryCluster, body.cluster_id)
+    if cluster is None:
+        raise HTTPException(status_code=422, detail="Story not found")
+
+    # Validate action
+    action = body.action.lower()
+    if action not in _VALID_ACTIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid action '{body.action}'. "
+            f"Valid: {', '.join(sorted(_VALID_ACTIONS))}",
+        )
+
+    # Validate read_time_sec
+    if body.read_time_sec < 0:
+        raise HTTPException(
+            status_code=422,
+            detail="read_time_sec must be >= 0",
+        )
+
+    engagement = Engagement(
+        user_id=body.user_id,
+        cluster_id=body.cluster_id,
+        action=action,
+        read_time_sec=body.read_time_sec,
+    )
+    session.add(engagement)
+    session.commit()
+    session.refresh(engagement)
+    return EngagementOut.model_validate(engagement)
