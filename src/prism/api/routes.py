@@ -1,11 +1,13 @@
 """Prism API routes — health, config, sources, stories, users, and engagements."""
 
+import secrets
 from datetime import datetime
 from typing import Annotated
 
 from pydantic import BaseModel, EmailStr
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Security
+from fastapi.security import APIKeyHeader
 from sqlmodel import Session, col, select
 
 from prism.models import (
@@ -34,6 +36,37 @@ def _get_session():  # type: ignore[no-untyped-def]
 
     with Session(get_engine()) as session:
         yield session
+
+
+# ── Auth dependency ──────────────────────────────────────────────────
+
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def require_api_key(
+    api_key: str | None = Security(_api_key_header),
+    session: Session = Depends(_get_session),
+) -> User:
+    """Validate X-API-Key header. Returns the authenticated pro user."""
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Missing API key")
+
+    user = session.exec(
+        select(User).where(User.api_key == api_key)
+    ).first()
+
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    if not user.is_pro:
+        raise HTTPException(status_code=403, detail="API access requires a Pro subscription")
+
+    return user
+
+
+def generate_api_key() -> str:
+    """Generate a cryptographically secure API key."""
+    return f"prism_{secrets.token_urlsafe(32)}"
 
 
 # ── Response schemas ──────────────────────────────────────────────────
@@ -306,6 +339,7 @@ def create_user(
 @router.get("/users/{user_id}", response_model=UserOut)
 def get_user(
     user_id: int,
+    auth_user: User = Depends(require_api_key),
     session: Session = Depends(_get_session),
 ) -> UserOut:
     """Get a user profile by ID."""
@@ -319,6 +353,7 @@ def get_user(
 def update_user(
     user_id: int,
     body: UserUpdate,
+    auth_user: User = Depends(require_api_key),
     session: Session = Depends(_get_session),
 ) -> UserOut:
     """Update user profile fields."""
@@ -371,6 +406,7 @@ def update_user(
 @router.get("/users/{user_id}/briefings", response_model=list[BriefingOut])
 def list_briefings(
     user_id: int,
+    auth_user: User = Depends(require_api_key),
     limit: Annotated[int, Query(ge=1, le=100, description="Max results")] = 20,
     offset: Annotated[int, Query(ge=0, description="Skip N results")] = 0,
     session: Session = Depends(_get_session),
@@ -395,6 +431,7 @@ def list_briefings(
 def get_briefing(
     user_id: int,
     briefing_id: int,
+    auth_user: User = Depends(require_api_key),
     session: Session = Depends(_get_session),
 ) -> BriefingDetailOut:
     """Get a single briefing with full content."""
@@ -412,6 +449,7 @@ def get_briefing(
 @router.post("/users/{user_id}/briefings", response_model=BriefingDetailOut, status_code=201)
 def trigger_briefing(
     user_id: int,
+    auth_user: User = Depends(require_api_key),
     session: Session = Depends(_get_session),
 ) -> BriefingDetailOut:
     """Trigger on-demand briefing generation for a user."""
@@ -444,6 +482,7 @@ def trigger_briefing(
 @router.post("/engagements", response_model=EngagementOut, status_code=201)
 def create_engagement(
     body: EngagementCreate,
+    auth_user: User = Depends(require_api_key),
     session: Session = Depends(_get_session),
 ) -> EngagementOut:
     """Record a user engagement event (open/read/save/skip)."""

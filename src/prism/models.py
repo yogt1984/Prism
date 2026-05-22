@@ -106,6 +106,7 @@ class User(SQLModel, table=True):
     preferred_format: BriefingFormat = BriefingFormat.EMAIL
     briefing_depth: int = 10  # number of stories per briefing
     is_pro: bool = False
+    api_key: str = ""  # non-empty for pro users with API access
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

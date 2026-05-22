@@ -7,9 +7,11 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from prism.api.app import create_app
-from prism.api.routes import _get_session
+from prism.api.routes import _get_session, require_api_key
 from prism.db import init_db
 from prism.models import StoryCluster, User
+
+_FAKE_PRO = User(id=0, email="auth@test", is_pro=True, api_key="test")
 
 
 @pytest.fixture()
@@ -29,6 +31,7 @@ def client(db_engine):
             yield session
 
     app.dependency_overrides[_get_session] = _override
+    app.dependency_overrides[require_api_key] = lambda: _FAKE_PRO
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
