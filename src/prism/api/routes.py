@@ -1,21 +1,24 @@
-"""Prism API routes — health, config, sources, and stories."""
+"""Prism API routes — health, config, sources, stories, and users."""
 
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, col, select
 
 from prism.models import (
     Article,
+    BriefingFormat,
     Category,
     Perspective,
     Source,
     StoryCluster,
     StoryStatus,
+    User,
 )
+from prism.onboarding import VALID_INTERESTS, RegistrationError, register_user
 
 router = APIRouter()
 
@@ -111,6 +114,32 @@ class StoryOut(BaseModel):
 class StoryDetailOut(StoryOut):
     articles: list[ArticleOut]
     perspectives: list[PerspectiveOut]
+
+
+class UserCreate(BaseModel):
+    email: str
+    interests: str = ""
+    briefing_depth: int = 10
+
+
+class UserUpdate(BaseModel):
+    interests: str | None = None
+    preferred_format: str | None = None
+    briefing_depth: int | None = None
+    name: str | None = None
+
+
+class UserOut(BaseModel):
+    id: int
+    email: str
+    name: str
+    interests: str
+    preferred_format: str
+    briefing_depth: int
+    is_pro: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────
@@ -210,3 +239,88 @@ def get_story(
     data["articles"] = [ArticleOut.model_validate(a).model_dump() for a in articles]
     data["perspectives"] = [PerspectiveOut.model_validate(p).model_dump() for p in perspectives]
     return StoryDetailOut(**data)
+
+
+# ── Users ─────────────────────────────────────────────────────────────
+
+_VALID_FORMATS = {f.value for f in BriefingFormat}
+
+
+@router.post("/users", response_model=UserOut, status_code=201)
+def create_user(
+    body: UserCreate,
+    session: Session = Depends(_get_session),
+) -> UserOut:
+    """Register a new user."""
+    try:
+        user = register_user(
+            email=body.email,
+            interests=body.interests,
+            briefing_depth=body.briefing_depth,
+            engine=session.get_bind(),
+        )
+    except RegistrationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return UserOut.model_validate(user)
+
+
+@router.get("/users/{user_id}", response_model=UserOut)
+def get_user(
+    user_id: int,
+    session: Session = Depends(_get_session),
+) -> UserOut:
+    """Get a user profile by ID."""
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return UserOut.model_validate(user)
+
+
+@router.patch("/users/{user_id}", response_model=UserOut)
+def update_user(
+    user_id: int,
+    body: UserUpdate,
+    session: Session = Depends(_get_session),
+) -> UserOut:
+    """Update user profile fields."""
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if body.interests is not None:
+        if body.interests:
+            for interest in body.interests.split(","):
+                interest = interest.strip()
+                if interest not in VALID_INTERESTS:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Invalid interest: '{interest}'. "
+                        f"Must be one of: {', '.join(sorted(VALID_INTERESTS))}",
+                    )
+        user.interests = body.interests
+
+    if body.preferred_format is not None:
+        fmt = body.preferred_format.lower()
+        if fmt not in _VALID_FORMATS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid format: '{body.preferred_format}'. "
+                f"Valid: {', '.join(sorted(_VALID_FORMATS))}",
+            )
+        user.preferred_format = BriefingFormat(fmt)
+
+    if body.briefing_depth is not None:
+        if body.briefing_depth < 1 or body.briefing_depth > 25:
+            raise HTTPException(
+                status_code=422,
+                detail="briefing_depth must be between 1 and 25",
+            )
+        user.briefing_depth = body.briefing_depth
+
+    if body.name is not None:
+        user.name = body.name
+
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return UserOut.model_validate(user)
