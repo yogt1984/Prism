@@ -10,6 +10,7 @@ from sqlmodel import Session, col, select
 
 from prism.models import (
     Article,
+    Briefing,
     BriefingFormat,
     Category,
     Perspective,
@@ -140,6 +141,22 @@ class UserOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class BriefingOut(BaseModel):
+    id: int
+    user_id: int
+    story_count: int
+    sent: bool
+    sent_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class BriefingDetailOut(BriefingOut):
+    content_html: str
+    content_text: str
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────
@@ -324,3 +341,76 @@ def update_user(
     session.commit()
     session.refresh(user)
     return UserOut.model_validate(user)
+
+
+# ── Briefings ─────────────────────────────────────────────────────────
+
+
+@router.get("/users/{user_id}/briefings", response_model=list[BriefingOut])
+def list_briefings(
+    user_id: int,
+    limit: Annotated[int, Query(ge=1, le=100, description="Max results")] = 20,
+    offset: Annotated[int, Query(ge=0, description="Skip N results")] = 0,
+    session: Session = Depends(_get_session),
+) -> list[BriefingOut]:
+    """List a user's briefings, newest first."""
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    stmt = (
+        select(Briefing)
+        .where(Briefing.user_id == user_id)
+        .order_by(col(Briefing.created_at).desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = session.exec(stmt).all()
+    return [BriefingOut.model_validate(r) for r in rows]
+
+
+@router.get("/users/{user_id}/briefings/{briefing_id}", response_model=BriefingDetailOut)
+def get_briefing(
+    user_id: int,
+    briefing_id: int,
+    session: Session = Depends(_get_session),
+) -> BriefingDetailOut:
+    """Get a single briefing with full content."""
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    briefing = session.get(Briefing, briefing_id)
+    if briefing is None or briefing.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Briefing not found")
+
+    return BriefingDetailOut.model_validate(briefing)
+
+
+@router.post("/users/{user_id}/briefings", response_model=BriefingDetailOut, status_code=201)
+def trigger_briefing(
+    user_id: int,
+    session: Session = Depends(_get_session),
+) -> BriefingDetailOut:
+    """Trigger on-demand briefing generation for a user."""
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    from prism.agents.p_ai import PersonalizationAgent
+    from prism.agents.w_ai import WriterAgent
+
+    engine = session.get_bind()
+    p_ai = PersonalizationAgent()
+    w_ai = WriterAgent()
+
+    stories = p_ai.select_stories(user, engine=engine)
+    briefing = w_ai.create_and_send(user, stories, engine=engine)
+
+    if briefing is None:
+        raise HTTPException(
+            status_code=422,
+            detail="No stories available for briefing generation",
+        )
+
+    return BriefingDetailOut.model_validate(briefing)
