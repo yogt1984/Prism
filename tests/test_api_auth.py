@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from prism.api.app import create_app
-from prism.api.routes import _get_session, generate_api_key
+from prism.api.routes import _get_session, generate_api_key, hash_api_key
 from prism.db import init_db
 from prism.models import User
 
@@ -35,21 +35,21 @@ def client(db_engine):
 
 
 def _make_pro_user(engine, email="pro@test.com"):
-    key = generate_api_key()
+    raw_key, key_hash = generate_api_key()
     with Session(engine, expire_on_commit=False) as s:
-        user = User(email=email, interests="finance", is_pro=True, api_key=key)
+        user = User(email=email, interests="finance", is_pro=True, api_key_hash=key_hash)
         s.add(user)
         s.commit()
-    return user, key
+    return user, raw_key
 
 
 def _make_free_user(engine, email="free@test.com"):
-    key = generate_api_key()
+    raw_key, key_hash = generate_api_key()
     with Session(engine, expire_on_commit=False) as s:
-        user = User(email=email, interests="finance", is_pro=False, api_key=key)
+        user = User(email=email, interests="finance", is_pro=False, api_key_hash=key_hash)
         s.add(user)
         s.commit()
-    return user, key
+    return user, raw_key
 
 
 # ── Public endpoints stay public ─────────────────────────────────────
@@ -252,19 +252,33 @@ def test_registration_does_not_return_api_key(client):
 
 
 def test_generate_api_key_prefix():
-    key = generate_api_key()
-    assert key.startswith("prism_")
+    raw_key, _ = generate_api_key()
+    assert raw_key.startswith("prism_")
 
 
 def test_generate_api_key_length():
-    key = generate_api_key()
+    raw_key, _ = generate_api_key()
     # prism_ (6) + 43 chars of base64url = ~49 chars
-    assert len(key) > 30
+    assert len(raw_key) > 30
 
 
 def test_generate_api_key_unique():
-    keys = {generate_api_key() for _ in range(100)}
+    keys = {generate_api_key()[0] for _ in range(100)}
     assert len(keys) == 100
+
+
+def test_generate_api_key_returns_tuple():
+    result = generate_api_key()
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    raw_key, key_hash = result
+    assert raw_key.startswith("prism_")
+    assert len(key_hash) == 64  # SHA-256 hex digest
+
+
+def test_generate_api_key_hash_matches():
+    raw_key, key_hash = generate_api_key()
+    assert hash_api_key(raw_key) == key_hash
 
 
 # ── Empty api_key field doesn't auth ─────────────────────────────────
@@ -281,9 +295,9 @@ def test_empty_api_key_header_401(client, db_engine):
 
 
 def test_user_with_no_api_key_field_cannot_auth(client, db_engine):
-    """A user with api_key='' must not match any lookup."""
+    """A user with api_key_hash='' must not match any lookup."""
     with Session(db_engine, expire_on_commit=False) as s:
-        user = User(email="noapi@test.com", is_pro=True, api_key="")
+        user = User(email="noapi@test.com", is_pro=True, api_key_hash="")
         s.add(user)
         s.commit()
     resp = client.get(

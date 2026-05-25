@@ -1,5 +1,6 @@
 """Prism API routes — health, config, sources, stories, users, and engagements."""
 
+import hashlib
 import secrets
 from datetime import datetime
 from typing import Annotated
@@ -43,6 +44,11 @@ def _get_session():  # type: ignore[no-untyped-def]
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
+def hash_api_key(raw_key: str) -> str:
+    """Hash an API key with SHA-256 for storage."""
+    return hashlib.sha256(raw_key.encode()).hexdigest()
+
+
 def require_api_key(
     api_key: str | None = Security(_api_key_header),
     session: Session = Depends(_get_session),
@@ -51,8 +57,9 @@ def require_api_key(
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing API key")
 
+    key_hash = hash_api_key(api_key)
     user = session.exec(
-        select(User).where(User.api_key == api_key)
+        select(User).where(User.api_key_hash == key_hash)
     ).first()
 
     if user is None:
@@ -64,9 +71,14 @@ def require_api_key(
     return user
 
 
-def generate_api_key() -> str:
-    """Generate a cryptographically secure API key."""
-    return f"prism_{secrets.token_urlsafe(32)}"
+def generate_api_key() -> tuple[str, str]:
+    """Generate a cryptographically secure API key.
+
+    Returns:
+        Tuple of (raw_key, hashed_key).
+    """
+    raw = f"prism_{secrets.token_urlsafe(32)}"
+    return raw, hash_api_key(raw)
 
 
 # ── Response schemas ──────────────────────────────────────────────────
@@ -343,6 +355,8 @@ def get_user(
     session: Session = Depends(_get_session),
 ) -> UserOut:
     """Get a user profile by ID."""
+    if auth_user.id != user_id:
+        raise HTTPException(status_code=403, detail="Access denied: you can only access your own resources")
     user = session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -357,6 +371,8 @@ def update_user(
     session: Session = Depends(_get_session),
 ) -> UserOut:
     """Update user profile fields."""
+    if auth_user.id != user_id:
+        raise HTTPException(status_code=403, detail="Access denied: you can only access your own resources")
     user = session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -412,6 +428,8 @@ def list_briefings(
     session: Session = Depends(_get_session),
 ) -> list[BriefingOut]:
     """List a user's briefings, newest first."""
+    if auth_user.id != user_id:
+        raise HTTPException(status_code=403, detail="Access denied: you can only access your own resources")
     user = session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -435,6 +453,8 @@ def get_briefing(
     session: Session = Depends(_get_session),
 ) -> BriefingDetailOut:
     """Get a single briefing with full content."""
+    if auth_user.id != user_id:
+        raise HTTPException(status_code=403, detail="Access denied: you can only access your own resources")
     user = session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -453,6 +473,8 @@ def trigger_briefing(
     session: Session = Depends(_get_session),
 ) -> BriefingDetailOut:
     """Trigger on-demand briefing generation for a user."""
+    if auth_user.id != user_id:
+        raise HTTPException(status_code=403, detail="Access denied: you can only access your own resources")
     user = session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
