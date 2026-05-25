@@ -20,7 +20,7 @@ from prism.models import (
     User,
 )
 
-_FAKE_PRO = User(id=0, email="auth@test", is_pro=True, api_key="test")
+_auth_state: dict[str, int] = {"user_id": 0}
 
 
 @pytest.fixture()
@@ -34,13 +34,16 @@ def db_engine(tmp_path: Path):
 @pytest.fixture()
 def client(db_engine):
     app = create_app()
+    _auth_state["user_id"] = 0
 
     def _override():
         with Session(db_engine) as session:
             yield session
 
     app.dependency_overrides[_get_session] = _override
-    app.dependency_overrides[require_api_key] = lambda: _FAKE_PRO
+    app.dependency_overrides[require_api_key] = lambda: User(
+        id=_auth_state["user_id"], email="auth@test", is_pro=True,
+    )
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
@@ -235,6 +238,7 @@ def test_e2e_register_get_update_user(client):
     })
     assert r1.status_code == 201
     user_id = r1.json()["id"]
+    _auth_state["user_id"] = user_id
 
     # Get
     r2 = client.get(f"/users/{user_id}")
@@ -327,6 +331,7 @@ def test_e2e_briefing_trigger_and_list(client, db_engine):
     user = client.post("/users", json={
         "email": "brief@test.com", "interests": "finance",
     }).json()
+    _auth_state["user_id"] = user["id"]
 
     # Mock the agents for briefing generation
     fake_briefing = Briefing(
@@ -371,6 +376,7 @@ def test_e2e_full_journey(client, db_engine):
         "interests": "finance",
     }).json()
     user_id = user["id"]
+    _auth_state["user_id"] = user_id
 
     # 4. Browse stories
     stories = client.get("/stories", params={"status": "analyzed"}).json()

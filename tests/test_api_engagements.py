@@ -11,7 +11,7 @@ from prism.api.routes import _get_session, require_api_key
 from prism.db import init_db
 from prism.models import StoryCluster, User
 
-_FAKE_PRO = User(id=0, email="auth@test", is_pro=True, api_key="test")
+_FAKE_PRO = User(id=0, email="auth@test", is_pro=True)
 
 
 @pytest.fixture()
