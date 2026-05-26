@@ -421,8 +421,8 @@ def test_audio_script_stored_not_sent(db_engine, caplog):
         assert stored.sent is False
         assert stored.content_text != ""
         assert stored.content_html == ""
-    assert "Skipping delivery" in caplog.text
-    assert "audio_script" in caplog.text
+    assert "Audio script briefing" in caplog.text
+    assert "API-only" in caplog.text
 
 
 def test_json_feed_stored_not_sent(db_engine, caplog):

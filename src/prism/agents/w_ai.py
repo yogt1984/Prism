@@ -53,6 +53,33 @@ Rules:
 - Total length: ~800 words for {story_count} stories
 """
 
+AUDIO_SCRIPT_PROMPT = """\
+You are writing a spoken-word news briefing script meant to be read aloud or \
+fed to a text-to-speech engine.
+
+User interests: {interests}
+
+Stories to cover:
+{stories_json}
+
+Rules:
+- Write naturally spoken prose — conversational but authoritative.
+- NO HTML tags, NO markdown, NO bullet points.
+- Open with a brief greeting and date context (e.g. "Good morning. Here's \
+your briefing for today.").
+- For each story: give a 2-3 sentence summary, then note where sources \
+disagree if applicable.
+- Use spoken-form attribution: "according to Reuters", "as reported by \
+Bloomberg" — never parenthetical "(Source: X)".
+- Use transition phrases between stories: "Moving on", "In related news", \
+"Also worth noting", "Turning to", "Meanwhile".
+- For difficult proper nouns, add phonetic guidance in square brackets \
+(e.g. "Yellen [YEL-en]") on first mention only.
+- Close with a brief sign-off.
+- Target length: ~{word_target} words ({story_count} stories, ~3 minutes \
+reading time).
+"""
+
 
 class WriterAgent:
     def __init__(self) -> None:
@@ -113,6 +140,26 @@ class WriterAgent:
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
+
+    def _format_audio_script(
+        self,
+        user: User,
+        clusters: list[StoryCluster],
+        engine: Engine | None = None,
+    ) -> str:
+        """Generate a spoken-word audio script briefing via Claude."""
+        stories_data = self.build_story_data(clusters, engine)
+        word_target = max(350, min(550, len(clusters) * 90))
+
+        prompt = AUDIO_SCRIPT_PROMPT.format(
+            interests=user.interests,
+            stories_json=json.dumps(stories_data, indent=2),
+            story_count=len(clusters),
+            word_target=word_target,
+        )
+
+        response = self._call_claude(prompt)
+        return response.content[0].text
 
     def _format_json_feed(
         self,
@@ -202,12 +249,13 @@ class WriterAgent:
         if fmt == BriefingFormat.JSON_FEED:
             content_html = ""
             content_text = self._format_json_feed(user, clusters, content, e)
-        elif fmt == BriefingFormat.EMAIL:
+        elif fmt == BriefingFormat.AUDIO_SCRIPT:
+            content_html = ""
+            content_text = self._format_audio_script(user, clusters, e)
+        else:
+            # Default: EMAIL
             content_html = content
             content_text = ""
-        else:
-            content_html = ""
-            content_text = content
 
         with Session(e) as session:
             briefing = Briefing(
@@ -234,10 +282,10 @@ class WriterAgent:
                     "JSON feed briefing for user %s — API-only, no email delivery",
                     user.email,
                 )
-            else:
+            elif fmt == BriefingFormat.AUDIO_SCRIPT:
                 logger.info(
-                    "Skipping delivery for user %s (format=%s, not yet supported)",
-                    user.email, fmt,
+                    "Audio script briefing for user %s — API-only, no email delivery",
+                    user.email,
                 )
 
             logger.info("Created briefing %d for user %s (%d stories)",

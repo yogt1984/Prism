@@ -2,6 +2,7 @@
 
 import hashlib
 import secrets
+import time
 from datetime import datetime
 from typing import Annotated
 
@@ -26,6 +27,8 @@ from prism.models import (
 from prism.onboarding import VALID_INTERESTS, RegistrationError, register_user
 
 router = APIRouter()
+
+_process_start_time = time.monotonic()
 
 
 # ── Database dependency ───────────────────────────────────────────────
@@ -86,6 +89,13 @@ def generate_api_key() -> tuple[str, str]:
 
 class HealthResponse(BaseModel):
     status: str
+
+
+class ReadinessResponse(BaseModel):
+    status: str
+    db: str
+    uptime_seconds: float
+    last_cycles: dict[str, float | None]
 
 
 class TierLimits(BaseModel):
@@ -234,8 +244,50 @@ class EngagementOut(BaseModel):
 
 @router.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
+    """Liveness probe — always returns ok (backward compatible)."""
+    return HealthResponse(status="ok")
+
+
+@router.get("/health/live", response_model=HealthResponse)
+def health_live() -> HealthResponse:
     """Liveness probe — always returns ok."""
     return HealthResponse(status="ok")
+
+
+@router.get("/health/ready", response_model=ReadinessResponse)
+def health_ready(session: Session = Depends(_get_session)) -> ReadinessResponse:
+    """Readiness probe — checks DB connectivity and reports cycle status."""
+    from prism.metrics import cycle_duration_seconds
+
+    uptime = time.monotonic() - _process_start_time
+
+    # Check DB connectivity
+    try:
+        session.exec(select(Source).limit(1))  # type: ignore[call-overload]
+        db_status = "connected"
+        status = "ok"
+    except Exception as exc:
+        db_status = f"unreachable: {exc}"
+        status = "degraded"
+
+    # Report last cycle timestamps from histogram
+    hist_data = cycle_duration_seconds.snapshot()
+    last_cycles: dict[str, float | None] = {
+        "last_duration": hist_data.get("max") if hist_data.get("count", 0) > 0 else None,
+        "total_cycles": hist_data.get("count"),
+    }
+
+    resp = ReadinessResponse(
+        status=status,
+        db=db_status,
+        uptime_seconds=round(uptime, 2),
+        last_cycles=last_cycles,
+    )
+    if status == "degraded":
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=503, content=resp.model_dump())  # type: ignore[return-value]
+    return resp
 
 
 @router.get("/metrics")
