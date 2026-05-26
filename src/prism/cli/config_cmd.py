@@ -7,7 +7,7 @@ from rich.panel import Panel
 
 from prism.cli._fmt import console, err_console, is_json_mode, print_json, print_table
 
-app = typer.Typer(help="Configuration inspection.")
+app = typer.Typer(help="View configuration, validate API keys, and generate .env templates.")
 
 # Fields that contain secrets and should be masked in output.
 _SECRET_FIELDS = {"anthropic_api_key", "brave_api_key", "resend_api_key"}

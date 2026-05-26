@@ -16,7 +16,7 @@ from prism.cli._fmt import (
     print_table,
 )
 
-app = typer.Typer(help="Briefing management.")
+app = typer.Typer(help="List, preview, and resend generated briefings.")
 
 
 @app.command("ls")
@@ -62,7 +62,7 @@ def briefing_ls(
 
 
 @app.command("show")
-def briefing_show(briefing_id: int) -> None:
+def briefing_show(briefing_id: Annotated[int, typer.Argument(help="Briefing ID.")]) -> None:
     """Show briefing content."""
     from prism.models import Briefing, User
     engine = _get_engine()
@@ -101,7 +101,7 @@ def briefing_show(briefing_id: int) -> None:
 
 
 @app.command("preview")
-def briefing_preview(email: str) -> None:
+def briefing_preview(email: Annotated[str, typer.Argument(help="User email address.")]) -> None:
     """Generate a briefing preview without sending (dry run)."""
     from prism.agents.p_ai import PersonalizationAgent
     from prism.agents.w_ai import WriterAgent
@@ -142,7 +142,7 @@ def briefing_preview(email: str) -> None:
 
 
 @app.command("resend")
-def briefing_resend(briefing_id: int) -> None:
+def briefing_resend(briefing_id: Annotated[int, typer.Argument(help="Briefing ID.")]) -> None:
     """Resend a previously generated briefing."""
     from prism.agents.w_ai import WriterAgent
     from prism.models import Briefing, User

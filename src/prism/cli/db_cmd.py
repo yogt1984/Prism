@@ -20,7 +20,7 @@ from prism.cli._fmt import (
     print_table,
 )
 
-app = typer.Typer(help="Database management.")
+app = typer.Typer(help="Initialize, migrate, back up, and export the database.")
 
 
 @app.command("upgrade")

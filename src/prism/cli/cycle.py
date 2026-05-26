@@ -15,7 +15,7 @@ from prism.cli._fmt import (
     print_json,
 )
 
-app = typer.Typer(help="Manually trigger agent cycles.")
+app = typer.Typer(help="Manually trigger discovery, analysis, or briefing cycles.")
 
 
 @app.command("discover")

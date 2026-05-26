@@ -16,7 +16,7 @@ from prism.cli._fmt import (
     print_table,
 )
 
-app = typer.Typer(help="User management.")
+app = typer.Typer(help="Manage subscriber profiles, interests, and delivery preferences.")
 
 
 def _find_user(session: Session, email: str):  # type: ignore[no-untyped-def]
@@ -35,9 +35,13 @@ def _fmt_last_briefing(info: dict) -> str:  # type: ignore[type-arg]
 
 @app.command("add")
 def user_add(
-    email: str,
-    interests: Annotated[str, typer.Option(help="Comma-separated interests.")] = "",
-    depth: Annotated[int, typer.Option(help="Stories per briefing.")] = 10,
+    email: Annotated[str, typer.Argument(help="User email address.")],
+    interests: Annotated[
+        str, typer.Option(
+            help="Comma-separated interests (finance, politics, technology, sports, culture, science, health, world).",
+        ),
+    ] = "",
+    depth: Annotated[int, typer.Option(help="Stories per briefing (default 10, pro max 25).")] = 10,
 ) -> None:
     """Register a new user."""
     from prism.onboarding import RegistrationError, register_user
@@ -77,7 +81,7 @@ def user_ls(
 
 
 @app.command("show")
-def user_show(email: str) -> None:
+def user_show(email: Annotated[str, typer.Argument(help="User email address.")]) -> None:
     """Show user details, engagement stats, and last briefing."""
     from prism.models import Briefing, Engagement
     engine = _get_engine()
@@ -132,11 +136,18 @@ def user_show(email: str) -> None:
 
 @app.command("edit")
 def user_edit(
-    email: str,
-    interests: Annotated[str | None, typer.Option(help="Comma-separated interests.")] = None,
-    depth: Annotated[int | None, typer.Option(help="Stories per briefing.")] = None,
-    fmt: Annotated[str | None, typer.Option("--format",
-                                            help="email|json_feed|audio_script")] = None,
+    email: Annotated[str, typer.Argument(help="User email address.")],
+    interests: Annotated[
+        str | None, typer.Option(
+            help="Comma-separated interests (finance, politics, technology, sports, culture, science, health, world).",
+        ),
+    ] = None,
+    depth: Annotated[int | None, typer.Option(help="Stories per briefing (default 10, pro max 25).")] = None,
+    fmt: Annotated[
+        str | None, typer.Option(
+            "--format", help="Briefing format: email, json_feed, or audio_script (pro only).",
+        ),
+    ] = None,
 ) -> None:
     """Update user preferences."""
     from prism.models import BriefingFormat
@@ -175,7 +186,7 @@ def user_edit(
 
 @app.command("rm")
 def user_rm(
-    email: str,
+    email: Annotated[str, typer.Argument(help="User email address.")],
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation.")] = False,
 ) -> None:
     """Delete a user."""

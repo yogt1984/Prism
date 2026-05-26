@@ -18,7 +18,7 @@ from prism.cli._fmt import (
     print_table,
 )
 
-app = typer.Typer(help="Story cluster inspection.")
+app = typer.Typer(help="Inspect discovered story clusters, articles, and perspectives.")
 
 
 def _age_str(dt: datetime) -> str:
@@ -62,7 +62,7 @@ def story_ls(
 
 
 @app.command("show")
-def story_show(cluster_id: int) -> None:
+def story_show(cluster_id: Annotated[int, typer.Argument(help="Story cluster ID.")]) -> None:
     """Show full cluster details with perspectives."""
     from prism.models import Article, Perspective, Source, StoryCluster
     engine = _get_engine()
