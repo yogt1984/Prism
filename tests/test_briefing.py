@@ -444,8 +444,8 @@ def test_json_feed_stored_not_sent(db_engine, caplog):
     with Session(db_engine) as s:
         stored = s.get(Briefing, briefing.id)
         assert stored.sent is False
-    assert "Skipping delivery" in caplog.text
-    assert "json_feed" in caplog.text
+    assert "JSON feed briefing" in caplog.text
+    assert "API-only" in caplog.text
 
 
 # --- T9.2: Tier enforcement in W_AI ---

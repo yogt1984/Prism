@@ -114,6 +114,47 @@ class WriterAgent:
             messages=[{"role": "user", "content": prompt}],
         )
 
+    def _format_json_feed(
+        self,
+        user: User,
+        clusters: list[StoryCluster],
+        briefing_content: str,
+        engine: Engine | None = None,
+    ) -> str:
+        """Format briefing as a structured JSON feed for API consumers."""
+        stories_data = self.build_story_data(clusters, engine)
+        items = []
+        for cluster, story_data in zip(clusters, stories_data):
+            sources = list({
+                p.get("bias_label", "unknown"): p.get("summary", "")
+                for p in story_data["perspectives"]
+            }.keys()) if story_data["perspectives"] else []
+            # Collect unique source names from perspectives
+            source_names = []
+            seen = set()
+            for p in story_data["perspectives"]:
+                label = p.get("bias_label", "unknown")
+                if label not in seen:
+                    source_names.append(label)
+                    seen.add(label)
+
+            items.append({
+                "id": cluster.id,
+                "headline": story_data["headline"],
+                "summary": story_data["summary"],
+                "categories": [c.strip() for c in story_data["categories"].split(",") if c.strip()],
+                "perspectives": story_data["perspectives"],
+                "sources": source_names,
+            })
+
+        feed = {
+            "version": "1.0",
+            "title": f"Prism Briefing for {user.email}",
+            "generated_at": datetime.now(UTC).isoformat(),
+            "items": items,
+        }
+        return json.dumps(feed, indent=2)
+
     @staticmethod
     @retry_on_transient(max_retries=3, base_delay=2.0, extra_exceptions=(Exception,))
     def _send_via_resend(payload: dict) -> None:
@@ -157,11 +198,22 @@ class WriterAgent:
         e = engine or get_engine()
         content = self.generate_briefing(user, clusters, e)
 
+        # Format-specific content routing
+        if fmt == BriefingFormat.JSON_FEED:
+            content_html = ""
+            content_text = self._format_json_feed(user, clusters, content, e)
+        elif fmt == BriefingFormat.EMAIL:
+            content_html = content
+            content_text = ""
+        else:
+            content_html = ""
+            content_text = content
+
         with Session(e) as session:
             briefing = Briefing(
                 user_id=user.id,  # type: ignore[arg-type]
-                content_html=content if fmt == BriefingFormat.EMAIL else "",
-                content_text=content if fmt != BriefingFormat.EMAIL else "",
+                content_html=content_html,
+                content_text=content_text,
                 story_count=len(clusters),
                 prompt_version=BRIEFING_PROMPT_VERSION,
             )
@@ -177,6 +229,11 @@ class WriterAgent:
                     briefing.sent_at = datetime.now(UTC)
                     session.add(briefing)
                     session.commit()
+            elif fmt == BriefingFormat.JSON_FEED:
+                logger.info(
+                    "JSON feed briefing for user %s — API-only, no email delivery",
+                    user.email,
+                )
             else:
                 logger.info(
                     "Skipping delivery for user %s (format=%s, not yet supported)",
