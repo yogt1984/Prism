@@ -109,19 +109,53 @@ class DiscoveryAgent:
             return 0.0
         return len(words_a & words_b) / len(words_a | words_b)
 
+    @staticmethod
+    def _tfidf_similarity(a: str, b: str) -> float:
+        """TF-IDF cosine similarity between two strings.
+
+        Returns 0.0 if sklearn is unavailable or inputs are empty.
+        """
+        if not a or not b:
+            return 0.0
+        try:
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            from sklearn.metrics.pairwise import cosine_similarity
+        except ImportError:
+            return 0.0
+        try:
+            vectorizer = TfidfVectorizer()
+            matrix = vectorizer.fit_transform([a, b])
+            return float(cosine_similarity(matrix[0:1], matrix[1:2])[0, 0])
+        except ValueError:
+            # e.g. empty vocabulary after stop-word removal
+            return 0.0
+
     def deduplicate_articles(
         self, articles: list[dict], threshold: float = 0.6,
+        tfidf_threshold: float = 0.5,
     ) -> list[list[dict]]:
-        """Group articles covering the same story using word-set Jaccard similarity."""
+        """Group articles covering the same story.
+
+        Primary: Jaccard similarity >= threshold.
+        Fallback: when Jaccard is in [0.4, threshold), use TF-IDF as tiebreaker.
+        """
         clusters: list[list[dict]] = []
         for article in articles:
             title = article.get("title", "")
             placed = False
             for cluster in clusters:
-                if self._jaccard(title, cluster[0].get("title", "")) >= threshold:
+                rep_title = cluster[0].get("title", "")
+                jaccard = self._jaccard(title, rep_title)
+                if jaccard >= threshold:
                     cluster.append(article)
                     placed = True
                     break
+                if jaccard >= 0.4:
+                    tfidf = self._tfidf_similarity(title, rep_title)
+                    if tfidf >= tfidf_threshold:
+                        cluster.append(article)
+                        placed = True
+                        break
             if not placed:
                 clusters.append([article])
         return clusters
