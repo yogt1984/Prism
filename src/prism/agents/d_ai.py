@@ -17,6 +17,7 @@ from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from prism.alerts import AlertLevel, send_alert
+from prism.circuit_breaker import brave_breaker
 from prism.config import settings
 from prism.db import get_engine, get_session
 from prism.metrics import timed_cycle
@@ -35,6 +36,7 @@ class DiscoveryAgent:
             timeout=30.0,
         )
 
+    @brave_breaker
     @retry_on_transient(max_retries=3, base_delay=2.0)
     def search_brave(self, query: str, count: int = 20) -> list[dict]:
         """Search Brave News API for recent articles on a topic."""

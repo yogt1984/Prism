@@ -14,6 +14,7 @@ import resend
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
+from prism.circuit_breaker import claude_breaker
 from prism.config import settings
 from prism.db import get_engine
 from prism.metrics import timed_cycle
@@ -103,6 +104,7 @@ class WriterAgent:
         response = self._call_claude(prompt)
         return response.content[0].text
 
+    @claude_breaker
     @retry_on_transient(max_retries=3, base_delay=2.0)
     def _call_claude(self, prompt: str):  # type: ignore[no-untyped-def]
         """Call Claude API with retry on transient failures."""
