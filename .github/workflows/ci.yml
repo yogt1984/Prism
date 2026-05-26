@@ -29,3 +29,35 @@ jobs:
         env:
           ANTHROPIC_API_KEY: sk-ant-test-dummy
         run: pytest tests/ -v
+
+  docker:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t prism:ci .
+
+      - name: Verify CLI starts
+        run: docker run --rm prism:ci prism --help
+
+      - name: Verify config check (graceful failure)
+        run: |
+          docker run --rm -e ANTHROPIC_API_KEY=sk-test prism:ci prism config check || true
+
+      - name: Verify non-root user
+        run: |
+          USER=$(docker run --rm prism:ci whoami)
+          [ "$USER" = "prism" ] || (echo "Expected prism user, got $USER" && exit 1)
+
+      - name: Health check smoke test
+        run: |
+          docker run -d --name prism-ci -p 8000:8000 \
+            -e ANTHROPIC_API_KEY=sk-test \
+            -e DATABASE_URL=sqlite:///app/data/ci.db \
+            prism:ci uvicorn prism.api.app:create_app --factory --host 0.0.0.0 --port 8000
+          sleep 3
+          curl -f http://localhost:8000/health
+          docker stop prism-ci
+          docker rm prism-ci
