@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 
 from prism.config import settings
 from prism.db import get_engine
+from prism.metrics import timed_cycle
 from prism.models import (
     Briefing,
     BriefingFormat,
@@ -132,6 +133,7 @@ class WriterAgent:
             logger.exception("Failed to send email to %s", user.email)
             return False
 
+    @timed_cycle("briefing")
     def create_and_send(
         self, user: User, clusters: list[StoryCluster],
         engine: Engine | None = None,

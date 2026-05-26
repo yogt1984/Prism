@@ -14,6 +14,7 @@ from sqlmodel import Session, select
 
 from prism.config import settings
 from prism.db import get_engine
+from prism.metrics import timed_cycle
 from prism.models import (
     Article,
     BiasLabel,
@@ -206,6 +207,7 @@ class AnalysisAgent:
                 len(result.get("perspectives", [])),
             )
 
+    @timed_cycle("analysis")
     def process_pending(self, engine: Engine | None = None) -> None:
         """Analyze all raw (unanalyzed) story clusters."""
         e = engine or get_engine()

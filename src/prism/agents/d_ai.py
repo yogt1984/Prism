@@ -18,6 +18,7 @@ from sqlmodel import Session, select
 from prism.alerts import AlertLevel, send_alert
 from prism.config import settings
 from prism.db import get_engine, get_session
+from prism.metrics import timed_cycle
 from prism.models import Article, Source, StoryCluster, StoryStatus
 from prism.retry import retry_on_transient
 
@@ -275,6 +276,7 @@ class DiscoveryAgent:
 
     # --- Full Cycle ---
 
+    @timed_cycle("discovery")
     def run_discovery(
         self,
         queries: list[str] | None = None,

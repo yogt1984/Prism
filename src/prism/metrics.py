@@ -7,8 +7,12 @@ JSON snapshot of all registered metrics.
 
 from __future__ import annotations
 
+import functools
+import logging
 import threading
+import time
 from dataclasses import dataclass, field
+from typing import Any, Callable
 
 
 _lock = threading.RLock()
@@ -140,3 +144,46 @@ discovery_clusters_stored = Counter("discovery_clusters_stored")
 analysis_duration_seconds = Histogram("analysis_duration_seconds")
 briefing_sent_total = Counter("briefing_sent_total")
 api_requests_total = Counter("api_requests_total")
+cycle_successes_total = Counter("cycle_successes_total")
+cycle_failures_total = Counter("cycle_failures_total")
+cycle_duration_seconds = Histogram("cycle_duration_seconds")
+
+_timed_logger = logging.getLogger("prism.metrics")
+
+
+# ── timed_cycle decorator ────────────────────────────────────────────
+
+
+def timed_cycle(name: str) -> Callable:
+    """Decorator that logs cycle timing/status and updates metrics.
+
+    Args:
+        name: Human-readable cycle name (e.g. "discovery", "analysis").
+    """
+
+    def decorator(fn: Callable) -> Callable:
+        @functools.wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            start = time.monotonic()
+            try:
+                result = fn(*args, **kwargs)
+                elapsed = time.monotonic() - start
+                cycle_successes_total.inc()
+                cycle_duration_seconds.observe(elapsed)
+                _timed_logger.info(
+                    "Cycle '%s' completed in %.3fs", name, elapsed,
+                )
+                return result
+            except Exception:
+                elapsed = time.monotonic() - start
+                cycle_failures_total.inc()
+                cycle_duration_seconds.observe(elapsed)
+                _timed_logger.error(
+                    "Cycle '%s' failed after %.3fs", name, elapsed,
+                    exc_info=True,
+                )
+                raise
+
+        return wrapper
+
+    return decorator
