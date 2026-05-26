@@ -12,8 +12,10 @@ import anthropic
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
+from prism.circuit_breaker import claude_breaker
 from prism.config import settings
 from prism.db import get_engine
+from prism.metrics import timed_cycle
 from prism.models import (
     Article,
     BiasLabel,
@@ -70,6 +72,57 @@ class AnalysisAgent:
         self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
     @staticmethod
+    def _validate_analysis(result: dict) -> list[str]:
+        """Validate analysis output quality, returning a list of issues."""
+        issues: list[str] = []
+
+        # Check summary length
+        summary = result.get("summary", "")
+        if len(summary) < 50:
+            issues.append(f"Summary too short ({len(summary)} chars, min 50)")
+        elif len(summary) > 500:
+            issues.append(f"Summary too long ({len(summary)} chars, max 500)")
+
+        # Check perspectives count
+        perspectives = result.get("perspectives", [])
+        if len(perspectives) < 2:
+            issues.append(f"Too few perspectives ({len(perspectives)}, min 2)")
+
+        # Check each perspective
+        seen_source_ids: set[int] = set()
+        for i, p in enumerate(perspectives):
+            # key_claims non-empty
+            claims = p.get("key_claims", [])
+            if not claims:
+                issues.append(f"Perspective {i} has empty key_claims")
+
+            # sentiment in range
+            sentiment = p.get("sentiment", 0.0)
+            try:
+                s_val = float(sentiment)
+                if s_val < -1.0 or s_val > 1.0:
+                    issues.append(f"Perspective {i} sentiment {s_val} out of range [-1.0, 1.0]")
+            except (TypeError, ValueError):
+                issues.append(f"Perspective {i} has invalid sentiment value")
+
+            # duplicate source_ids
+            sid = p.get("source_id")
+            if sid is not None:
+                if sid in seen_source_ids:
+                    issues.append(f"Duplicate source_id {sid} in perspectives")
+                seen_source_ids.add(sid)
+
+        return issues
+
+    @staticmethod
+    def _compute_quality_score(issues: list[str], total_checks: int) -> float:
+        """Compute quality score as ratio of passed checks."""
+        if total_checks == 0:
+            return 0.0
+        passed = max(0, total_checks - len(issues))
+        return round(passed / total_checks, 2)
+
+    @staticmethod
     def _truncate_articles(
         articles_data: list[dict], max_tokens: int,
     ) -> list[dict]:
@@ -96,6 +149,7 @@ class AnalysisAgent:
             return BiasLabel(value)
         return BiasLabel.UNKNOWN
 
+    @claude_breaker
     @retry_on_transient(max_retries=3, base_delay=2.0)
     def _call_claude(self, prompt: str):  # type: ignore[no-untyped-def]
         """Call Claude API with retry on transient failures."""
@@ -168,11 +222,26 @@ class AnalysisAgent:
                 )
                 return
 
+            # Validate output quality
+            issues = self._validate_analysis(result)
+            # Total checks: summary length, perspectives count,
+            # + per-perspective: key_claims, sentiment, duplicate source_id
+            n_perspectives = len(result.get("perspectives", []))
+            total_checks = 2 + n_perspectives * 3  # 2 global + 3 per perspective
+            quality_score = self._compute_quality_score(issues, total_checks)
+            if issues:
+                logger.warning(
+                    "Quality issues for cluster %d (score=%.2f): %s",
+                    cluster_id, quality_score, "; ".join(issues),
+                )
+
             # Update cluster
             cluster.headline = result.get("headline", cluster.headline)
             cluster.summary = result.get("summary", "")
             cluster.categories = ",".join(result.get("categories", []))
             cluster.status = StoryStatus.ANALYZED
+            cluster.prompt_version = ANALYSIS_PROMPT_VERSION
+            cluster.quality_score = quality_score
 
             # Store perspectives (capped to config limit)
             perspectives_raw = result.get("perspectives", [])
@@ -206,6 +275,7 @@ class AnalysisAgent:
                 len(result.get("perspectives", [])),
             )
 
+    @timed_cycle("analysis")
     def process_pending(self, engine: Engine | None = None) -> None:
         """Analyze all raw (unanalyzed) story clusters."""
         e = engine or get_engine()

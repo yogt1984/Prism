@@ -245,3 +245,433 @@ def test_pro_user_gets_up_to_max_stories(db_engine):
     stories = p_ai.select_stories(detached, engine=db_engine)
     # max_briefing_stories = 25
     assert len(stories) <= 25
+
+
+# --- T12.1: Engagement weight calculation ---
+
+
+def _seed_engagement_data(session: Session, user_id: int, cluster_id: int,
+                          action: str, read_time_sec: int = 0,
+                          age_days: int = 0) -> None:
+    """Create an engagement with a specific age."""
+    eng = Engagement(
+        user_id=user_id,
+        cluster_id=cluster_id,
+        action=action,
+        read_time_sec=read_time_sec,
+        created_at=datetime.now(UTC) - timedelta(days=age_days),
+    )
+    session.add(eng)
+
+
+def _make_cluster(session: Session, categories: str) -> int:
+    """Create a cluster with given categories, return its id."""
+    c = StoryCluster(
+        headline=f"Story about {categories}",
+        categories=categories,
+        status=StoryStatus.ANALYZED,
+        article_count=2,
+        first_seen=datetime.now(UTC) - timedelta(hours=1),
+    )
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    return c.id
+
+
+class TestEngagementWeights:
+    """T12.1: _compute_engagement_weights tests."""
+
+    def test_empty_history_returns_empty(self, db_engine):
+        """No engagements → empty dict."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="empty@t.com", interests="finance")
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+        result = p_ai._compute_engagement_weights(uid, engine=db_engine)
+        assert result == {}
+
+    def test_saves_produce_high_weight(self, db_engine):
+        """Multiple saves on finance → high finance weight."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="saver@t.com", interests="finance")
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+            cid = _make_cluster(s, "finance")
+            for _ in range(5):
+                _seed_engagement_data(s, uid, cid, "save")
+            s.commit()
+
+        weights = p_ai._compute_engagement_weights(uid, engine=db_engine)
+        assert "finance" in weights
+        assert weights["finance"] > 0.5
+
+    def test_skips_produce_low_weight(self, db_engine):
+        """All skips on sports → low/zero sports weight."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="skipper@t.com", interests="sports")
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+            cid = _make_cluster(s, "sports")
+            for _ in range(5):
+                _seed_engagement_data(s, uid, cid, "skip")
+            s.commit()
+
+        weights = p_ai._compute_engagement_weights(uid, engine=db_engine)
+        assert "sports" in weights
+        assert weights["sports"] == 0.0
+
+    def test_saves_outweigh_skips(self, db_engine):
+        """Category with saves should score higher than category with skips."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="mixed@t.com", interests="finance,sports")
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+            fin_id = _make_cluster(s, "finance")
+            sport_id = _make_cluster(s, "sports")
+
+            for _ in range(3):
+                _seed_engagement_data(s, uid, fin_id, "save")
+            for _ in range(3):
+                _seed_engagement_data(s, uid, sport_id, "skip")
+            s.commit()
+
+        weights = p_ai._compute_engagement_weights(uid, engine=db_engine)
+        assert weights["finance"] > weights["sports"]
+
+    def test_read_over_30s_counts_as_read(self, db_engine):
+        """Read with >30s read_time gets full read weight (1.0)."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="reader@t.com", interests="finance")
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+            cid = _make_cluster(s, "finance")
+            _seed_engagement_data(s, uid, cid, "read", read_time_sec=60)
+            s.commit()
+
+        weights = p_ai._compute_engagement_weights(uid, engine=db_engine)
+        assert "finance" in weights
+        assert weights["finance"] > 0.0
+
+    def test_short_read_treated_as_open(self, db_engine):
+        """Read with <=30s read_time gets open weight (0.5) instead of read (1.0)."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="short@t.com", interests="finance,sports")
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+            fin_id = _make_cluster(s, "finance")
+            sport_id = _make_cluster(s, "sports")
+
+            # Short read on finance (0.5 weight)
+            _seed_engagement_data(s, uid, fin_id, "read", read_time_sec=10)
+            # Long read on sports (1.0 weight)
+            _seed_engagement_data(s, uid, sport_id, "read", read_time_sec=60)
+            s.commit()
+
+        weights = p_ai._compute_engagement_weights(uid, engine=db_engine)
+        assert weights["sports"] > weights["finance"]
+
+    def test_old_engagements_excluded(self, db_engine):
+        """Engagements older than 30 days are not counted."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="old@t.com", interests="finance")
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+            cid = _make_cluster(s, "finance")
+            _seed_engagement_data(s, uid, cid, "save", age_days=31)
+            s.commit()
+
+        weights = p_ai._compute_engagement_weights(uid, engine=db_engine)
+        assert weights == {}
+
+    def test_recent_engagements_included(self, db_engine):
+        """Engagements within 30 days are counted."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="recent@t.com", interests="finance")
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+            cid = _make_cluster(s, "finance")
+            _seed_engagement_data(s, uid, cid, "save", age_days=15)
+            s.commit()
+
+        weights = p_ai._compute_engagement_weights(uid, engine=db_engine)
+        assert "finance" in weights
+        assert weights["finance"] > 0.0
+
+    def test_normalized_range(self, db_engine):
+        """All weights must be in [0.0, 1.0]."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="norm@t.com", interests="finance,sports,technology")
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+            fin_id = _make_cluster(s, "finance")
+            sport_id = _make_cluster(s, "sports")
+            tech_id = _make_cluster(s, "technology")
+
+            for _ in range(5):
+                _seed_engagement_data(s, uid, fin_id, "save")
+            for _ in range(3):
+                _seed_engagement_data(s, uid, sport_id, "open")
+            for _ in range(4):
+                _seed_engagement_data(s, uid, tech_id, "skip")
+            s.commit()
+
+        weights = p_ai._compute_engagement_weights(uid, engine=db_engine)
+        for cat, val in weights.items():
+            assert 0.0 <= val <= 1.0, f"{cat} weight {val} out of range"
+
+    def test_multi_category_cluster(self, db_engine):
+        """Engagement on a multi-category cluster boosts all its categories."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="multi@t.com", interests="finance,technology")
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+            cid = _make_cluster(s, "finance,technology")
+            _seed_engagement_data(s, uid, cid, "save")
+            s.commit()
+
+        weights = p_ai._compute_engagement_weights(uid, engine=db_engine)
+        assert "finance" in weights
+        assert "technology" in weights
+
+    def test_single_category_all_same_action(self, db_engine):
+        """Single category with uniform positive action → weight 1.0."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="uniform@t.com", interests="finance")
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+            cid = _make_cluster(s, "finance")
+            for _ in range(3):
+                _seed_engagement_data(s, uid, cid, "save")
+            s.commit()
+
+        weights = p_ai._compute_engagement_weights(uid, engine=db_engine)
+        # Only one category with positive score → normalized to 1.0
+        assert weights["finance"] == 1.0
+
+    def test_open_weight(self, db_engine):
+        """Open action contributes positive weight."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="opener@t.com", interests="finance")
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+            cid = _make_cluster(s, "finance")
+            _seed_engagement_data(s, uid, cid, "open")
+            s.commit()
+
+        weights = p_ai._compute_engagement_weights(uid, engine=db_engine)
+        assert weights["finance"] > 0.0
+
+
+# --- T12.2: Engagement weights integrated into scoring ---
+
+
+class TestEngagementScoring:
+    """T12.2: Verify engagement weights affect score_story and select_stories."""
+
+    def test_engagement_weight_boosts_score(self):
+        """Story in high-weight category scores higher than without weights."""
+        p_ai = PersonalizationAgent()
+        user = User(email="t@t.com", interests="finance")
+        cluster = StoryCluster(
+            categories="finance",
+            status=StoryStatus.ANALYZED,
+            article_count=2,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        score_without = p_ai.score_story(cluster, user)
+        score_with = p_ai.score_story(cluster, user, engagement_weights={"finance": 1.0})
+        assert score_with > score_without
+
+    def test_engagement_bonus_is_3_per_category(self):
+        """Engagement bonus = weight * 3.0 per matching category."""
+        p_ai = PersonalizationAgent()
+        user = User(email="t@t.com", interests="finance")
+        cluster = StoryCluster(
+            categories="finance",
+            status=StoryStatus.ANALYZED,
+            article_count=2,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        base = p_ai.score_story(cluster, user)
+        boosted = p_ai.score_story(cluster, user, engagement_weights={"finance": 0.5})
+        assert abs((boosted - base) - 1.5) < 0.01  # 0.5 * 3.0 = 1.5
+
+    def test_no_weights_identical_to_none(self):
+        """Passing None or empty dict produces the same score as no weights."""
+        p_ai = PersonalizationAgent()
+        user = User(email="t@t.com", interests="finance")
+        cluster = StoryCluster(
+            categories="finance",
+            status=StoryStatus.ANALYZED,
+            article_count=2,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        base = p_ai.score_story(cluster, user)
+        with_none = p_ai.score_story(cluster, user, engagement_weights=None)
+        with_empty = p_ai.score_story(cluster, user, engagement_weights={})
+        assert base == with_none
+        assert base == with_empty
+
+    def test_unrelated_weight_no_effect(self):
+        """Weight for a category not in the story has no effect."""
+        p_ai = PersonalizationAgent()
+        user = User(email="t@t.com", interests="finance")
+        cluster = StoryCluster(
+            categories="finance",
+            status=StoryStatus.ANALYZED,
+            article_count=2,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        base = p_ai.score_story(cluster, user)
+        with_other = p_ai.score_story(cluster, user, engagement_weights={"sports": 1.0})
+        assert base == with_other
+
+    def test_multi_category_gets_multi_bonus(self):
+        """Story with two matching categories gets bonus for both."""
+        p_ai = PersonalizationAgent()
+        user = User(email="t@t.com", interests="finance,technology")
+        cluster = StoryCluster(
+            categories="finance,technology",
+            status=StoryStatus.ANALYZED,
+            article_count=2,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        base = p_ai.score_story(cluster, user)
+        weights = {"finance": 1.0, "technology": 0.5}
+        boosted = p_ai.score_story(cluster, user, engagement_weights=weights)
+        expected_bonus = 1.0 * 3.0 + 0.5 * 3.0  # 4.5
+        assert abs((boosted - base) - expected_bonus) < 0.01
+
+    def test_interest_still_dominates(self):
+        """Interest match (+5.0) still contributes more than engagement (+3.0 max)."""
+        p_ai = PersonalizationAgent()
+        user = User(email="t@t.com", interests="finance")
+        # Story matching interest
+        matching = StoryCluster(
+            categories="finance",
+            status=StoryStatus.ANALYZED,
+            article_count=1,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        # Story not matching interest but with high engagement weight
+        non_matching = StoryCluster(
+            categories="sports",
+            status=StoryStatus.ANALYZED,
+            article_count=1,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        weights = {"sports": 1.0}
+        score_match = p_ai.score_story(matching, user, engagement_weights=weights)
+        score_engage = p_ai.score_story(non_matching, user, engagement_weights=weights)
+        assert score_match > score_engage
+
+    def test_engagement_changes_sort_order(self, db_engine):
+        """Engagement weights can reorder stories with equal base scores."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="order@t.com", interests="finance,sports", is_pro=True)
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+            # Old clusters for engagement history (already seen → excluded)
+            old_sport_id = _make_cluster(s, "sports")
+            for _ in range(5):
+                _seed_engagement_data(s, uid, old_sport_id, "save")
+            s.commit()
+
+            # New unseen clusters that will be scored
+            fin_id = _make_cluster(s, "finance")
+            sport_id = _make_cluster(s, "sports")
+
+        detached = User(id=uid, email="order@t.com", interests="finance,sports", is_pro=True)
+        stories = p_ai.select_stories(detached, engine=db_engine)
+
+        # Sports should come before finance due to engagement weights
+        sport_idx = next((i for i, c in enumerate(stories) if c.id == sport_id), None)
+        fin_idx = next((i for i, c in enumerate(stories) if c.id == fin_id), None)
+        assert sport_idx is not None and fin_idx is not None
+        assert sport_idx < fin_idx
+
+    def test_select_stories_without_engagement_unchanged(self, db_engine):
+        """select_stories with no engagement history gives same result as before."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="noeng@t.com", interests="finance", is_pro=True)
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+            _make_cluster(s, "finance")
+
+        detached = User(id=uid, email="noeng@t.com", interests="finance", is_pro=True)
+        stories = p_ai.select_stories(detached, engine=db_engine)
+        assert len(stories) == 1  # the single finance cluster
+
+    def test_select_stories_calls_weights_once(self, db_engine):
+        """Engagement weights are computed once, not per-story."""
+        from unittest.mock import patch
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="once@t.com", interests="finance", is_pro=True)
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+            for i in range(3):
+                _make_cluster(s, "finance")
+
+        detached = User(id=uid, email="once@t.com", interests="finance", is_pro=True)
+        with patch.object(p_ai, "_compute_engagement_weights", wraps=p_ai._compute_engagement_weights) as mock:
+            p_ai.select_stories(detached, engine=db_engine)
+            assert mock.call_count == 1

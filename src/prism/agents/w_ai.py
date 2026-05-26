@@ -14,8 +14,10 @@ import resend
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
+from prism.circuit_breaker import claude_breaker
 from prism.config import settings
 from prism.db import get_engine
+from prism.metrics import timed_cycle
 from prism.models import (
     Briefing,
     BriefingFormat,
@@ -102,6 +104,7 @@ class WriterAgent:
         response = self._call_claude(prompt)
         return response.content[0].text
 
+    @claude_breaker
     @retry_on_transient(max_retries=3, base_delay=2.0)
     def _call_claude(self, prompt: str):  # type: ignore[no-untyped-def]
         """Call Claude API with retry on transient failures."""
@@ -110,6 +113,47 @@ class WriterAgent:
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
+
+    def _format_json_feed(
+        self,
+        user: User,
+        clusters: list[StoryCluster],
+        briefing_content: str,
+        engine: Engine | None = None,
+    ) -> str:
+        """Format briefing as a structured JSON feed for API consumers."""
+        stories_data = self.build_story_data(clusters, engine)
+        items = []
+        for cluster, story_data in zip(clusters, stories_data):
+            sources = list({
+                p.get("bias_label", "unknown"): p.get("summary", "")
+                for p in story_data["perspectives"]
+            }.keys()) if story_data["perspectives"] else []
+            # Collect unique source names from perspectives
+            source_names = []
+            seen = set()
+            for p in story_data["perspectives"]:
+                label = p.get("bias_label", "unknown")
+                if label not in seen:
+                    source_names.append(label)
+                    seen.add(label)
+
+            items.append({
+                "id": cluster.id,
+                "headline": story_data["headline"],
+                "summary": story_data["summary"],
+                "categories": [c.strip() for c in story_data["categories"].split(",") if c.strip()],
+                "perspectives": story_data["perspectives"],
+                "sources": source_names,
+            })
+
+        feed = {
+            "version": "1.0",
+            "title": f"Prism Briefing for {user.email}",
+            "generated_at": datetime.now(UTC).isoformat(),
+            "items": items,
+        }
+        return json.dumps(feed, indent=2)
 
     @staticmethod
     @retry_on_transient(max_retries=3, base_delay=2.0, extra_exceptions=(Exception,))
@@ -132,6 +176,7 @@ class WriterAgent:
             logger.exception("Failed to send email to %s", user.email)
             return False
 
+    @timed_cycle("briefing")
     def create_and_send(
         self, user: User, clusters: list[StoryCluster],
         engine: Engine | None = None,
@@ -153,12 +198,24 @@ class WriterAgent:
         e = engine or get_engine()
         content = self.generate_briefing(user, clusters, e)
 
+        # Format-specific content routing
+        if fmt == BriefingFormat.JSON_FEED:
+            content_html = ""
+            content_text = self._format_json_feed(user, clusters, content, e)
+        elif fmt == BriefingFormat.EMAIL:
+            content_html = content
+            content_text = ""
+        else:
+            content_html = ""
+            content_text = content
+
         with Session(e) as session:
             briefing = Briefing(
                 user_id=user.id,  # type: ignore[arg-type]
-                content_html=content if fmt == BriefingFormat.EMAIL else "",
-                content_text=content if fmt != BriefingFormat.EMAIL else "",
+                content_html=content_html,
+                content_text=content_text,
                 story_count=len(clusters),
+                prompt_version=BRIEFING_PROMPT_VERSION,
             )
             session.add(briefing)
             session.commit()
@@ -172,6 +229,11 @@ class WriterAgent:
                     briefing.sent_at = datetime.now(UTC)
                     session.add(briefing)
                     session.commit()
+            elif fmt == BriefingFormat.JSON_FEED:
+                logger.info(
+                    "JSON feed briefing for user %s — API-only, no email delivery",
+                    user.email,
+                )
             else:
                 logger.info(
                     "Skipping delivery for user %s (format=%s, not yet supported)",

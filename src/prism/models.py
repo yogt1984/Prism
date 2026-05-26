@@ -62,6 +62,8 @@ class StoryCluster(SQLModel, table=True):
     categories: str = ""  # comma-separated
     status: StoryStatus = StoryStatus.RAW
     article_count: int = 0
+    prompt_version: str = ""  # analysis prompt version used by A_AI
+    quality_score: float = 0.0  # 0.0-1.0, analysis output quality
     first_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_updated: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -106,6 +108,8 @@ class User(SQLModel, table=True):
     preferred_format: BriefingFormat = BriefingFormat.EMAIL
     briefing_depth: int = 10  # number of stories per briefing
     is_pro: bool = False
+    api_key: str = ""  # deprecated — kept for backward compat, cleared after hashing
+    api_key_hash: str = ""  # SHA-256 hash of the API key
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -127,6 +131,7 @@ class Briefing(SQLModel, table=True):
     content_html: str = ""
     content_text: str = ""
     story_count: int = 0
+    prompt_version: str = ""  # briefing prompt version used by W_AI
     sent: bool = False
     sent_at: datetime | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

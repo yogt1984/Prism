@@ -5,6 +5,7 @@ clusters them by event, and maintains a source trust registry.
 """
 
 import logging
+import re
 from calendar import timegm
 from datetime import UTC, datetime, timedelta
 from time import struct_time
@@ -16,8 +17,10 @@ from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from prism.alerts import AlertLevel, send_alert
+from prism.circuit_breaker import CircuitOpenError, brave_breaker
 from prism.config import settings
 from prism.db import get_engine, get_session
+from prism.metrics import discovery_brave_skip_total, timed_cycle
 from prism.models import Article, Source, StoryCluster, StoryStatus
 from prism.retry import retry_on_transient
 
@@ -33,6 +36,7 @@ class DiscoveryAgent:
             timeout=30.0,
         )
 
+    @brave_breaker
     @retry_on_transient(max_retries=3, base_delay=2.0)
     def search_brave(self, query: str, count: int = 20) -> list[dict]:
         """Search Brave News API for recent articles on a topic."""
@@ -108,19 +112,79 @@ class DiscoveryAgent:
             return 0.0
         return len(words_a & words_b) / len(words_a | words_b)
 
+    @staticmethod
+    def _tfidf_similarity(a: str, b: str) -> float:
+        """TF-IDF cosine similarity between two strings.
+
+        Returns 0.0 if sklearn is unavailable or inputs are empty.
+        """
+        if not a or not b:
+            return 0.0
+        try:
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            from sklearn.metrics.pairwise import cosine_similarity
+        except ImportError:
+            return 0.0
+        try:
+            vectorizer = TfidfVectorizer()
+            matrix = vectorizer.fit_transform([a, b])
+            return float(cosine_similarity(matrix[0:1], matrix[1:2])[0, 0])
+        except ValueError:
+            # e.g. empty vocabulary after stop-word removal
+            return 0.0
+
+    # Regex for capitalized multi-word entities (e.g. "Federal Reserve", "Elon Musk")
+    _ENTITY_RE = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b")
+
+    @staticmethod
+    def _entity_overlap(a: str, b: str) -> float:
+        """Jaccard similarity on extracted named entities.
+
+        Extracts capitalized word sequences (e.g. "Federal Reserve",
+        "Elon Musk") via regex — no spaCy dependency.
+        """
+        if not a or not b:
+            return 0.0
+        entities_a = set(DiscoveryAgent._ENTITY_RE.findall(a))
+        entities_b = set(DiscoveryAgent._ENTITY_RE.findall(b))
+        if not entities_a or not entities_b:
+            return 0.0
+        return len(entities_a & entities_b) / len(entities_a | entities_b)
+
+    def _combined_similarity(self, a: str, b: str) -> float:
+        """Weighted combination of Jaccard, TF-IDF, and entity overlap."""
+        jaccard = self._jaccard(a, b)
+        tfidf = self._tfidf_similarity(a, b)
+        entity = self._entity_overlap(a, b)
+        return 0.5 * jaccard + 0.3 * tfidf + 0.2 * entity
+
     def deduplicate_articles(
         self, articles: list[dict], threshold: float = 0.6,
     ) -> list[list[dict]]:
-        """Group articles covering the same story using word-set Jaccard similarity."""
+        """Group articles covering the same story.
+
+        Primary: Jaccard similarity >= threshold.
+        Fallback: when Jaccard is in [0.4, threshold), use combined score
+        (0.5*jaccard + 0.3*tfidf + 0.2*entity) with threshold 0.4.
+        """
+        combined_threshold = 0.4
         clusters: list[list[dict]] = []
         for article in articles:
             title = article.get("title", "")
             placed = False
             for cluster in clusters:
-                if self._jaccard(title, cluster[0].get("title", "")) >= threshold:
+                rep_title = cluster[0].get("title", "")
+                jaccard = self._jaccard(title, rep_title)
+                if jaccard >= threshold:
                     cluster.append(article)
                     placed = True
                     break
+                if jaccard >= 0.4:
+                    combined = self._combined_similarity(title, rep_title)
+                    if combined >= combined_threshold:
+                        cluster.append(article)
+                        placed = True
+                        break
             if not placed:
                 clusters.append([article])
         return clusters
@@ -275,6 +339,7 @@ class DiscoveryAgent:
 
     # --- Full Cycle ---
 
+    @timed_cycle("discovery")
     def run_discovery(
         self,
         queries: list[str] | None = None,
@@ -288,11 +353,20 @@ class DiscoveryAgent:
             ]
 
         all_articles: list[dict] = []
+        brave_skipped = False
         for query in queries:
             try:
                 results = self._normalize_brave_results(self.search_brave(query, count=10))
                 all_articles.extend(results)
                 logger.info("Brave search '%s': %d results", query, len(results))
+            except CircuitOpenError:
+                if not brave_skipped:
+                    logger.warning(
+                        "Brave API circuit open, running RSS-only discovery cycle",
+                    )
+                    discovery_brave_skip_total.inc()
+                    brave_skipped = True
+                break
             except Exception:
                 logger.exception("Failed to search Brave for '%s'", query)
 
