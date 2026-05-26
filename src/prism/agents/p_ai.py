@@ -26,6 +26,68 @@ class PersonalizationAgent:
     def __init__(self) -> None:
         pass
 
+    # Engagement action weights for personalization scoring
+    _ACTION_WEIGHTS: dict[str, float] = {
+        "save": 2.0,
+        "read": 1.0,
+        "open": 0.5,
+        "skip": -1.0,
+    }
+
+    def _compute_engagement_weights(
+        self, user_id: int, engine: Engine | None = None,
+    ) -> dict[str, float]:
+        """Compute per-category affinity from recent engagement history.
+
+        Returns a dict mapping category names to normalized [0.0, 1.0] scores.
+        """
+        e = engine or get_engine()
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30)
+
+        with Session(e) as session:
+            engagements = session.exec(
+                select(Engagement).where(
+                    Engagement.user_id == user_id,
+                    Engagement.created_at >= cutoff,
+                )
+            ).all()
+
+            if not engagements:
+                return {}
+
+            # Accumulate raw scores per category
+            raw: dict[str, float] = {}
+            for eng in engagements:
+                cluster = session.get(StoryCluster, eng.cluster_id)
+                if cluster is None or not cluster.categories:
+                    continue
+
+                action = eng.action.lower()
+                weight = self._ACTION_WEIGHTS.get(action, 0.0)
+                # For "read" action, only count if read_time > 30s
+                if action == "read" and eng.read_time_sec <= 30:
+                    weight = 0.5  # treat short reads as "open"
+
+                for cat in cluster.categories.split(","):
+                    cat = cat.strip()
+                    if cat:
+                        raw[cat] = raw.get(cat, 0.0) + weight
+
+        if not raw:
+            return {}
+
+        # Normalize to 0.0–1.0 range
+        min_val = min(raw.values())
+        max_val = max(raw.values())
+        if max_val == min_val:
+            # All categories have the same score
+            return {cat: 1.0 if v > 0 else 0.0 for cat, v in raw.items()}
+
+        return {
+            cat: max(0.0, min(1.0, (v - min_val) / (max_val - min_val)))
+            for cat, v in raw.items()
+        }
+
     def score_story(self, cluster: StoryCluster, user: User) -> float:
         """Score a story's relevance to a user. Higher = more relevant."""
         score = 0.0
