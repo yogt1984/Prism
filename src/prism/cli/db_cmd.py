@@ -2,6 +2,7 @@
 
 import json as _json
 import os
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -164,3 +165,50 @@ def db_export(
 
     # Always output JSON (this is a data export command)
     print(_json.dumps(result, indent=2, default=str))
+
+
+@app.command("backup")
+def db_backup(
+    dest: Annotated[
+        str | None,
+        typer.Option("--dest", "-d", help="Destination path for backup file."),
+    ] = None,
+    rotate: Annotated[
+        int | None,
+        typer.Option("--rotate", "-r", help="Keep only the N most recent backups."),
+    ] = None,
+) -> None:
+    """Create a consistent backup of the SQLite database."""
+    from prism.backup import backup_database, default_backup_path, rotate_backups
+
+    engine = _get_engine()
+
+    if dest:
+        backup_path = Path(dest)
+    else:
+        backup_path = default_backup_path()
+
+    try:
+        result = backup_database(engine, backup_path)
+    except Exception as exc:
+        err_console.print(f"[red]Backup failed:[/red] {exc}")
+        raise typer.Exit(1)
+
+    size_mb = os.path.getsize(result) / (1024 * 1024)
+
+    if rotate and rotate > 0:
+        backup_dir = result.parent
+        deleted = rotate_backups(backup_dir, rotate)
+        rotate_info = f", rotated {len(deleted)} old backup(s)" if deleted else ""
+    else:
+        rotate_info = ""
+
+    if is_json_mode():
+        print_json({
+            "status": "ok",
+            "path": str(result),
+            "size_mb": round(size_mb, 3),
+        })
+        return
+
+    info(f"  [green]Backup created:[/green] {result} ({size_mb:.3f} MB{rotate_info})")
