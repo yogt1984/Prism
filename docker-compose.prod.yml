@@ -1,0 +1,48 @@
+# Production override: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+services:
+  scheduler:
+    build: .
+    image: prism:latest
+    env_file: .env
+    volumes:
+      - prism-data:/app/data
+    command: prism run
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    build: .
+    image: prism:latest
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - prism-data:/app/data
+    command: uvicorn prism.api.app:create_app --factory --host 0.0.0.0 --port 8000 --workers 2
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  prism-data:
