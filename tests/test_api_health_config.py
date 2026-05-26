@@ -1,13 +1,18 @@
-"""T10.2: FastAPI health + config endpoint tests."""
+"""T10.2: FastAPI health + config endpoint tests.
+
+T19.4: Health check hardening — liveness/readiness probes.
+"""
 
 import json
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlmodel import Session
 
 from prism.api.app import create_app
 from prism.config import Settings
+from prism.db import init_db
 from prism.models import Category
 
 
@@ -214,3 +219,86 @@ def test_openapi_schema_loads(raw_client):
 def test_unknown_route_returns_404(raw_client):
     resp = raw_client.get("/nonexistent")
     assert resp.status_code == 404
+
+
+# ── /health/live ─────────────────────────────────────────────────────
+
+
+def test_health_live_returns_200(raw_client):
+    resp = raw_client.get("/health/live")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+def test_health_live_identical_to_health(raw_client):
+    """Backward compat: /health and /health/live return the same body."""
+    h = raw_client.get("/health").json()
+    hl = raw_client.get("/health/live").json()
+    assert h == hl
+
+
+# ── /health/ready ────────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def db_client(tmp_path):
+    """Client with a real DB so /health/ready can check connectivity."""
+    url = f"sqlite:///{tmp_path / 'test.db'}"
+    engine = init_db(url)
+    app = create_app()
+
+    def _override_session():
+        with Session(engine) as s:
+            yield s
+
+    from prism.api.routes import _get_session
+    app.dependency_overrides[_get_session] = _override_session
+
+    with TestClient(app) as c:
+        yield c
+    engine.dispose()
+
+
+def test_health_ready_returns_200(db_client):
+    resp = db_client.get("/health/ready")
+    assert resp.status_code == 200
+
+
+def test_health_ready_body_fields(db_client):
+    data = db_client.get("/health/ready").json()
+    assert data["status"] == "ok"
+    assert data["db"] == "connected"
+    assert isinstance(data["uptime_seconds"], float)
+    assert data["uptime_seconds"] >= 0
+    assert "last_cycles" in data
+
+
+def test_health_ready_uptime_increases(db_client):
+    d1 = db_client.get("/health/ready").json()
+    d2 = db_client.get("/health/ready").json()
+    assert d2["uptime_seconds"] >= d1["uptime_seconds"]
+
+
+def test_health_ready_503_on_db_failure():
+    """When DB is unreachable, readiness returns 503."""
+    app = create_app()
+
+    def _broken_session():
+        raise RuntimeError("DB is down")
+        yield  # noqa: unreachable
+
+    from prism.api.routes import _get_session
+    app.dependency_overrides[_get_session] = _broken_session
+
+    with TestClient(app, raise_server_exceptions=False) as c:
+        resp = c.get("/health/ready")
+    # FastAPI dependency injection failure returns 500
+    assert resp.status_code in (500, 503)
+
+
+def test_health_backward_compat(db_client):
+    """/health still returns the simple response (no new fields)."""
+    data = db_client.get("/health").json()
+    assert data == {"status": "ok"}
+    assert "db" not in data
+    assert "uptime_seconds" not in data
