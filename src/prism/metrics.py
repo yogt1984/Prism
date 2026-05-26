@@ -1,0 +1,142 @@
+"""Simple in-process metrics collection for observability.
+
+Provides Counter, Gauge, and Histogram metric types stored in a
+module-level registry.  The ``GET /metrics`` API endpoint returns a
+JSON snapshot of all registered metrics.
+"""
+
+from __future__ import annotations
+
+import threading
+from dataclasses import dataclass, field
+
+
+_lock = threading.RLock()
+_registry: dict[str, "Counter | Gauge | Histogram"] = {}
+
+
+def _register(name: str, metric: "Counter | Gauge | Histogram") -> None:
+    with _lock:
+        if name in _registry:
+            raise ValueError(f"Metric '{name}' already registered")
+        _registry[name] = metric
+
+
+def get_metric(name: str) -> "Counter | Gauge | Histogram | None":
+    """Retrieve a registered metric by name."""
+    return _registry.get(name)
+
+
+def snapshot() -> dict[str, dict]:
+    """Return a JSON-serialisable snapshot of all registered metrics."""
+    with _lock:
+        return {name: m.snapshot() for name, m in sorted(_registry.items())}
+
+
+def reset_all() -> None:
+    """Clear all registered metrics (for testing only)."""
+    with _lock:
+        _registry.clear()
+
+
+# ── Metric types ─────────────────────────────────────────────────────
+
+
+@dataclass
+class Counter:
+    """Monotonically increasing counter."""
+
+    name: str
+    _value: float = field(default=0.0, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        _register(self.name, self)
+
+    def inc(self, amount: float = 1.0) -> None:
+        if amount < 0:
+            raise ValueError("Counter increment must be non-negative")
+        with _lock:
+            self._value += amount
+
+    @property
+    def value(self) -> float:
+        return self._value
+
+    def snapshot(self) -> dict:
+        return {"type": "counter", "value": self._value}
+
+
+@dataclass
+class Gauge:
+    """Value that can go up and down."""
+
+    name: str
+    _value: float = field(default=0.0, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        _register(self.name, self)
+
+    def set(self, value: float) -> None:
+        with _lock:
+            self._value = value
+
+    def inc(self, amount: float = 1.0) -> None:
+        with _lock:
+            self._value += amount
+
+    def dec(self, amount: float = 1.0) -> None:
+        with _lock:
+            self._value -= amount
+
+    @property
+    def value(self) -> float:
+        return self._value
+
+    def snapshot(self) -> dict:
+        return {"type": "gauge", "value": self._value}
+
+
+@dataclass
+class Histogram:
+    """Records observed values and computes summary statistics."""
+
+    name: str
+    _values: list[float] = field(default_factory=list, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        _register(self.name, self)
+
+    def observe(self, value: float) -> None:
+        with _lock:
+            self._values.append(value)
+
+    @property
+    def count(self) -> int:
+        return len(self._values)
+
+    def snapshot(self) -> dict:
+        with _lock:
+            if not self._values:
+                return {"type": "histogram", "count": 0, "sum": 0.0,
+                        "min": 0.0, "max": 0.0, "avg": 0.0}
+            _sum = 0.0
+            for v in self._values:
+                _sum += v
+            return {
+                "type": "histogram",
+                "count": len(self._values),
+                "sum": _sum,
+                "min": min(self._values),
+                "max": max(self._values),
+                "avg": _sum / len(self._values),
+            }
+
+
+# ── Default application metrics ─────────────────────────────────────
+# Imported by agents / middleware at runtime.
+
+discovery_articles_total = Counter("discovery_articles_total")
+discovery_clusters_stored = Counter("discovery_clusters_stored")
+analysis_duration_seconds = Histogram("analysis_duration_seconds")
+briefing_sent_total = Counter("briefing_sent_total")
+api_requests_total = Counter("api_requests_total")

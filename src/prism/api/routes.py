@@ -235,6 +235,14 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
+@router.get("/metrics")
+def metrics() -> dict:
+    """Return a JSON snapshot of all application metrics."""
+    from prism.metrics import snapshot
+
+    return snapshot()
+
+
 @router.get("/config", response_model=ConfigResponse)
 def config() -> ConfigResponse:
     """Public, non-secret runtime configuration."""
