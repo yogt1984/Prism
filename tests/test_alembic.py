@@ -113,7 +113,7 @@ class TestAlembicMigrations:
         with eng.connect() as conn:
             row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
             assert row is not None
-            assert row[0] == "001"
+            assert row[0] == "002"
         eng.dispose()
 
     def test_downgrade_base_drops_app_tables(self, tmp_path):
@@ -274,7 +274,7 @@ class TestInitDbAlembicInteraction:
         with engine.connect() as conn:
             row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
             assert row is not None
-            assert row[0] == "001"
+            assert row[0] == "002"
         engine.dispose()
 
     def test_schema_matches_between_init_db_and_alembic(self, tmp_path, _reset_engine):
@@ -341,7 +341,7 @@ class TestCliDbUpgrade:
         with engine.connect() as conn:
             row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
             assert row is not None
-            assert row[0] == "001"
+            assert row[0] == "002"
         engine.dispose()
 
     def test_cli_upgrade_specific_revision(self, tmp_path):
@@ -469,4 +469,168 @@ class TestAlembicDataCompat:
             row = conn.execute(text("SELECT name FROM source WHERE url='persist.com'")).fetchone()
             assert row is not None
             assert row[0] == "Persist"
+        eng.dispose()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# T14.2: Datetime index migration (002)
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestDatetimeIndexMigration:
+    """Tests for 002_add_datetime_indexes migration."""
+
+    _INDEX_NAMES = {
+        "storycluster": "ix_storycluster_first_seen",
+        "article": "ix_article_fetched_at",
+        "briefing": "ix_briefing_created_at",
+        "engagement": "ix_engagement_created_at",
+    }
+
+    def test_upgrade_002_creates_all_indexes(self, tmp_path):
+        _, url = _make_engine(tmp_path)
+        command.upgrade(_alembic_cfg(url), "002")
+        eng = create_engine(url, connect_args={"check_same_thread": False})
+        for table, idx_name in self._INDEX_NAMES.items():
+            indexes = {idx["name"] for idx in inspect(eng).get_indexes(table)}
+            assert idx_name in indexes, f"Missing index {idx_name} on {table}"
+        eng.dispose()
+
+    def test_upgrade_002_index_columns(self, tmp_path):
+        """Each index must cover the correct column."""
+        _, url = _make_engine(tmp_path)
+        command.upgrade(_alembic_cfg(url), "002")
+        eng = create_engine(url, connect_args={"check_same_thread": False})
+        expected_cols = {
+            "ix_storycluster_first_seen": ["first_seen"],
+            "ix_article_fetched_at": ["fetched_at"],
+            "ix_briefing_created_at": ["created_at"],
+            "ix_engagement_created_at": ["created_at"],
+        }
+        for table, idx_name in self._INDEX_NAMES.items():
+            indexes = inspect(eng).get_indexes(table)
+            match = [idx for idx in indexes if idx["name"] == idx_name]
+            assert match, f"Index {idx_name} not found"
+            assert match[0]["column_names"] == expected_cols[idx_name]
+        eng.dispose()
+
+    def test_downgrade_002_removes_indexes(self, tmp_path):
+        _, url = _make_engine(tmp_path)
+        cfg = _alembic_cfg(url)
+        command.upgrade(cfg, "002")
+        command.downgrade(cfg, "001")
+        eng = create_engine(url, connect_args={"check_same_thread": False})
+        for table, idx_name in self._INDEX_NAMES.items():
+            indexes = {idx["name"] for idx in inspect(eng).get_indexes(table)}
+            assert idx_name not in indexes, f"Index {idx_name} still exists after downgrade"
+        # Verify we're back at revision 001
+        with eng.connect() as conn:
+            row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
+            assert row[0] == "001"
+        eng.dispose()
+
+    def test_downgrade_002_preserves_tables(self, tmp_path):
+        """Downgrading 002 must not drop any tables."""
+        _, url = _make_engine(tmp_path)
+        cfg = _alembic_cfg(url)
+        command.upgrade(cfg, "002")
+        command.downgrade(cfg, "001")
+        eng = create_engine(url, connect_args={"check_same_thread": False})
+        tables = set(inspect(eng).get_table_names())
+        for t in ("source", "storycluster", "article", "perspective",
+                   "user", "engagement", "briefing"):
+            assert t in tables, f"Table {t} missing after downgrade to 001"
+        eng.dispose()
+
+    def test_roundtrip_002_no_data_loss(self, tmp_path):
+        """upgrade 002 → insert data → downgrade 001 → upgrade 002 — data survives."""
+        _, url = _make_engine(tmp_path)
+        cfg = _alembic_cfg(url)
+        command.upgrade(cfg, "002")
+        eng = create_engine(url, connect_args={"check_same_thread": False})
+        with eng.connect() as conn:
+            conn.execute(text(
+                "INSERT INTO source (name, url, created_at) "
+                "VALUES ('DataTest', 'data.com', '2026-01-01')"
+            ))
+            conn.execute(text(
+                "INSERT INTO storycluster (headline, first_seen, last_updated) "
+                "VALUES ('Test Story', '2026-01-15', '2026-01-15')"
+            ))
+            conn.commit()
+        command.downgrade(cfg, "001")
+        command.upgrade(cfg, "002")
+        with eng.connect() as conn:
+            row = conn.execute(text("SELECT name FROM source WHERE url='data.com'")).fetchone()
+            assert row is not None and row[0] == "DataTest"
+            row = conn.execute(text("SELECT headline FROM storycluster")).fetchone()
+            assert row is not None and row[0] == "Test Story"
+        eng.dispose()
+
+    def test_stepwise_upgrade_001_then_002(self, tmp_path):
+        """Upgrade to 001 first, then 002 — simulates incremental migration."""
+        _, url = _make_engine(tmp_path)
+        cfg = _alembic_cfg(url)
+        command.upgrade(cfg, "001")
+        eng = create_engine(url, connect_args={"check_same_thread": False})
+        # No datetime indexes at 001
+        for table, idx_name in self._INDEX_NAMES.items():
+            indexes = {idx["name"] for idx in inspect(eng).get_indexes(table)}
+            assert idx_name not in indexes
+        eng.dispose()
+        # Now upgrade to 002
+        command.upgrade(cfg, "002")
+        eng = create_engine(url, connect_args={"check_same_thread": False})
+        for table, idx_name in self._INDEX_NAMES.items():
+            indexes = {idx["name"] for idx in inspect(eng).get_indexes(table)}
+            assert idx_name in indexes
+        eng.dispose()
+
+    def test_head_is_002(self, tmp_path):
+        _, url = _make_engine(tmp_path)
+        command.upgrade(_alembic_cfg(url), "head")
+        eng = create_engine(url, connect_args={"check_same_thread": False})
+        with eng.connect() as conn:
+            row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
+            assert row[0] == "002"
+        eng.dispose()
+
+    def test_explain_query_plan_uses_index(self, tmp_path):
+        """SQLite EXPLAIN QUERY PLAN should reference the index for filtered queries."""
+        _, url = _make_engine(tmp_path)
+        command.upgrade(_alembic_cfg(url), "002")
+        eng = create_engine(url, connect_args={"check_same_thread": False})
+        queries = {
+            "ix_storycluster_first_seen": (
+                "SELECT * FROM storycluster WHERE first_seen > '2026-01-01'"
+            ),
+            "ix_article_fetched_at": (
+                "SELECT * FROM article WHERE fetched_at > '2026-01-01'"
+            ),
+            "ix_briefing_created_at": (
+                "SELECT * FROM briefing WHERE created_at > '2026-01-01'"
+            ),
+            "ix_engagement_created_at": (
+                "SELECT * FROM engagement WHERE created_at > '2026-01-01'"
+            ),
+        }
+        with eng.connect() as conn:
+            for idx_name, query in queries.items():
+                plan = conn.execute(text(f"EXPLAIN QUERY PLAN {query}")).fetchall()
+                plan_text = " ".join(str(row) for row in plan)
+                assert idx_name in plan_text, (
+                    f"Index {idx_name} not used in query plan: {plan_text}"
+                )
+        eng.dispose()
+
+    def test_upgrade_002_idempotent(self, tmp_path):
+        """Running upgrade to 002 twice must not error."""
+        _, url = _make_engine(tmp_path)
+        cfg = _alembic_cfg(url)
+        command.upgrade(cfg, "002")
+        command.upgrade(cfg, "002")  # no-op
+        eng = create_engine(url, connect_args={"check_same_thread": False})
+        with eng.connect() as conn:
+            row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
+            assert row[0] == "002"
         eng.dispose()
