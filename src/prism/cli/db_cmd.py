@@ -21,6 +21,50 @@ from prism.cli._fmt import (
 
 app = typer.Typer(help="Database management.")
 
+
+@app.command("upgrade")
+def db_upgrade(
+    revision: Annotated[
+        str,
+        typer.Argument(help="Target revision (default: head)."),
+    ] = "head",
+) -> None:
+    """Run Alembic migrations up to the target revision."""
+    from alembic import command
+    from alembic.config import Config
+
+    alembic_cfg = _get_alembic_config()
+    try:
+        command.upgrade(alembic_cfg, revision)
+    except Exception as exc:
+        err_console.print(f"[red]Migration failed:[/red] {exc}")
+        raise typer.Exit(1)
+
+    if is_json_mode():
+        print_json({"status": "ok", "revision": revision})
+        return
+    info(f"  [green]Migrations applied[/green] (target: {revision})")
+
+
+def _get_alembic_config():  # type: ignore[no-untyped-def]
+    """Build an Alembic Config pointing at the project's alembic directory."""
+    import pathlib
+
+    from alembic.config import Config
+
+    # alembic.ini lives at the project root
+    project_root = pathlib.Path(__file__).resolve().parent.parent.parent.parent
+    ini_path = project_root / "alembic.ini"
+    cfg = Config(str(ini_path))
+
+    # Override the database URL from prism settings or CLI --db flag
+    engine = _get_engine()
+    cfg.set_main_option(
+        "sqlalchemy.url",
+        engine.url.render_as_string(hide_password=False),
+    )
+    return cfg
+
 _TABLE_MODELS = {
     "source": "Source",
     "storycluster": "StoryCluster",
