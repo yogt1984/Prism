@@ -17,10 +17,10 @@ from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from prism.alerts import AlertLevel, send_alert
-from prism.circuit_breaker import brave_breaker
+from prism.circuit_breaker import CircuitOpenError, brave_breaker
 from prism.config import settings
 from prism.db import get_engine, get_session
-from prism.metrics import timed_cycle
+from prism.metrics import discovery_brave_skip_total, timed_cycle
 from prism.models import Article, Source, StoryCluster, StoryStatus
 from prism.retry import retry_on_transient
 
@@ -353,11 +353,20 @@ class DiscoveryAgent:
             ]
 
         all_articles: list[dict] = []
+        brave_skipped = False
         for query in queries:
             try:
                 results = self._normalize_brave_results(self.search_brave(query, count=10))
                 all_articles.extend(results)
                 logger.info("Brave search '%s': %d results", query, len(results))
+            except CircuitOpenError:
+                if not brave_skipped:
+                    logger.warning(
+                        "Brave API circuit open, running RSS-only discovery cycle",
+                    )
+                    discovery_brave_skip_total.inc()
+                    brave_skipped = True
+                break
             except Exception:
                 logger.exception("Failed to search Brave for '%s'", query)
 

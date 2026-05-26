@@ -141,6 +141,7 @@ class Histogram:
 
 discovery_articles_total = Counter("discovery_articles_total")
 discovery_clusters_stored = Counter("discovery_clusters_stored")
+discovery_brave_skip_total = Counter("discovery_brave_skip_total")
 analysis_duration_seconds = Histogram("analysis_duration_seconds")
 briefing_sent_total = Counter("briefing_sent_total")
 api_requests_total = Counter("api_requests_total")
