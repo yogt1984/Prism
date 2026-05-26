@@ -174,6 +174,7 @@ class AnalysisAgent:
             cluster.summary = result.get("summary", "")
             cluster.categories = ",".join(result.get("categories", []))
             cluster.status = StoryStatus.ANALYZED
+            cluster.prompt_version = ANALYSIS_PROMPT_VERSION
 
             # Store perspectives (capped to config limit)
             perspectives_raw = result.get("perspectives", [])

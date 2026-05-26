@@ -161,6 +161,7 @@ class WriterAgent:
                 content_html=content if fmt == BriefingFormat.EMAIL else "",
                 content_text=content if fmt != BriefingFormat.EMAIL else "",
                 story_count=len(clusters),
+                prompt_version=BRIEFING_PROMPT_VERSION,
             )
             session.add(briefing)
             session.commit()

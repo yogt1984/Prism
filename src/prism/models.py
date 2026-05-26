@@ -62,6 +62,7 @@ class StoryCluster(SQLModel, table=True):
     categories: str = ""  # comma-separated
     status: StoryStatus = StoryStatus.RAW
     article_count: int = 0
+    prompt_version: str = ""  # analysis prompt version used by A_AI
     first_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_updated: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -129,6 +130,7 @@ class Briefing(SQLModel, table=True):
     content_html: str = ""
     content_text: str = ""
     story_count: int = 0
+    prompt_version: str = ""  # briefing prompt version used by W_AI
     sent: bool = False
     sent_at: datetime | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

@@ -152,6 +152,7 @@ class StoryOut(BaseModel):
     categories: str
     status: str
     article_count: int
+    prompt_version: str
     first_seen: datetime
     last_updated: datetime
 
@@ -193,6 +194,7 @@ class BriefingOut(BaseModel):
     id: int
     user_id: int
     story_count: int
+    prompt_version: str
     sent: bool
     sent_at: datetime | None
     created_at: datetime
