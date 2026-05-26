@@ -63,6 +63,7 @@ class StoryCluster(SQLModel, table=True):
     status: StoryStatus = StoryStatus.RAW
     article_count: int = 0
     prompt_version: str = ""  # analysis prompt version used by A_AI
+    quality_score: float = 0.0  # 0.0-1.0, analysis output quality
     first_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_updated: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

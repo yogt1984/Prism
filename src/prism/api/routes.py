@@ -153,6 +153,7 @@ class StoryOut(BaseModel):
     status: str
     article_count: int
     prompt_version: str
+    quality_score: float
     first_seen: datetime
     last_updated: datetime
 
