@@ -34,6 +34,20 @@ No message queue, no Redis -- just SQLite in WAL mode.
 
 ## Quick Start
 
+### With Docker (recommended)
+
+```bash
+cp deploy/env.production.example .env   # fill in API keys
+docker compose build
+docker compose run --rm prism prism db init
+docker compose run --rm prism prism source seed
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+See [docs/deployment.md](docs/deployment.md) for the full deployment guide.
+
+### With pip
+
 ```bash
 pip install -e ".[dev]"
 cp .env.example .env       # fill in API keys
