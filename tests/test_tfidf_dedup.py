@@ -227,3 +227,149 @@ class TestDedupPerformance:
         elapsed = time.monotonic() - start
         assert elapsed < 2.0, f"Dedup took {elapsed:.2f}s, expected <2s"
         assert len(clusters) > 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# T13.2: Named entity overlap
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestEntityOverlap:
+
+    def test_same_entities(self, agent):
+        assert agent._entity_overlap(
+            "Elon Musk announces new plan",
+            "Elon Musk reveals strategy",
+        ) > 0.0
+
+    def test_no_shared_entities(self, agent):
+        assert agent._entity_overlap(
+            "Elon Musk launches rocket",
+            "Tim Cook presents iPhone",
+        ) == 0.0
+
+    def test_partial_entity_overlap(self, agent):
+        overlap = agent._entity_overlap(
+            "Elon Musk and Tim Cook meet at White House",
+            "Elon Musk visits White House for summit",
+        )
+        # "Elon Musk" and "White House" shared, "Tim Cook" only in first
+        assert 0.0 < overlap < 1.0
+
+    def test_empty_strings(self, agent):
+        assert agent._entity_overlap("", "Elon Musk") == 0.0
+        assert agent._entity_overlap("Elon Musk", "") == 0.0
+        assert agent._entity_overlap("", "") == 0.0
+
+    def test_no_capitalized_words(self, agent):
+        """Strings with no capitalized words → no entities → 0.0."""
+        assert agent._entity_overlap("the quick brown fox", "a lazy brown dog") == 0.0
+
+    def test_returns_float_in_range(self, agent):
+        result = agent._entity_overlap(
+            "Apple Google Microsoft Amazon",
+            "Apple Google Facebook Netflix",
+        )
+        assert isinstance(result, float)
+        assert 0.0 <= result <= 1.0
+
+    def test_identical_entities(self, agent):
+        assert agent._entity_overlap(
+            "Federal Reserve Bank of America",
+            "Federal Reserve Bank of America",
+        ) == 1.0
+
+    def test_multi_word_entities(self, agent):
+        """Multi-word entities like 'Federal Reserve' are captured as one unit."""
+        overlap = agent._entity_overlap(
+            "Federal Reserve raises rates",
+            "Federal Reserve cuts rates",
+        )
+        assert overlap > 0.0
+
+
+class TestCombinedSimilarity:
+
+    def test_combined_bounded(self, agent):
+        """Combined score must be in [0.0, 1.0]."""
+        pairs = [
+            ("identical text here", "identical text here"),
+            ("cat dog mouse", "red blue green"),
+            ("Apple stock price rises", "Apple stock price falls"),
+            ("", "hello"),
+        ]
+        for a, b in pairs:
+            score = agent._combined_similarity(a, b)
+            assert 0.0 <= score <= 1.0, f"Out of range for {a!r} vs {b!r}: {score}"
+
+    def test_identical_is_one(self, agent):
+        score = agent._combined_similarity(
+            "The Federal Reserve raises rates",
+            "The Federal Reserve raises rates",
+        )
+        assert score == pytest.approx(1.0)
+
+    def test_completely_different_near_zero(self, agent):
+        score = agent._combined_similarity(
+            "cat dog mouse rabbit",
+            "red blue green yellow",
+        )
+        assert score < 0.1
+
+    def test_entity_component_contributes(self, agent):
+        """Shared entities should increase combined score vs no shared entities."""
+        with_entities = agent._combined_similarity(
+            "Elon Musk announces Tesla expansion in California",
+            "Elon Musk reveals Tesla growth plans for California",
+        )
+        without_entities = agent._combined_similarity(
+            "Tim Cook announces Apple expansion in California",
+            "Elon Musk reveals Tesla growth plans for California",
+        )
+        assert with_entities > without_entities
+
+
+class TestEntityInDedup:
+    """Entity overlap integrated into deduplicate_articles."""
+
+    def test_shared_entities_help_clustering(self, agent):
+        """Articles sharing named entities cluster when in the gray zone."""
+        articles = [
+            {"title": "Federal Reserve announces new interest rate policy for economy"},
+            {"title": "Federal Reserve reveals updated interest rate strategy for economy"},
+        ]
+        clusters = agent.deduplicate_articles(articles)
+        assert len(clusters) == 1
+
+    def test_different_entities_stay_separate(self, agent):
+        """Articles about different entities in similar domains stay separate."""
+        articles = [
+            {"title": "Apple unveils revolutionary smartphone at annual keynote event"},
+            {"title": "Samsung reveals innovative smartphone at global product launch"},
+        ]
+        clusters = agent.deduplicate_articles(articles)
+        assert len(clusters) == 2
+
+    def test_no_entities_fallback_to_jaccard_tfidf(self, agent):
+        """Without entities, dedup still works via Jaccard/TF-IDF."""
+        articles = [
+            {"title": "the stock market crashed today amid fears"},
+            {"title": "the stock market crashed today amid panic"},
+        ]
+        clusters = agent.deduplicate_articles(articles)
+        assert len(clusters) == 1  # high Jaccard
+
+    def test_combined_score_used_in_gray_zone(self, agent):
+        """Verify _combined_similarity is called when Jaccard is in gray zone."""
+        articles = [
+            {"title": "Federal Reserve announces new interest rate policy for economy"},
+            {"title": "Federal Reserve reveals updated interest rate strategy for economy"},
+        ]
+        with patch.object(agent, "_combined_similarity",
+                          wraps=agent._combined_similarity) as mock:
+            agent.deduplicate_articles(articles)
+            jaccard = agent._jaccard(
+                articles[0]["title"], articles[1]["title"],
+            )
+            if 0.4 <= jaccard < 0.6:
+                assert mock.call_count >= 1

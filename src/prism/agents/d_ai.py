@@ -5,6 +5,7 @@ clusters them by event, and maintains a source trust registry.
 """
 
 import logging
+import re
 from calendar import timegm
 from datetime import UTC, datetime, timedelta
 from time import struct_time
@@ -130,15 +131,41 @@ class DiscoveryAgent:
             # e.g. empty vocabulary after stop-word removal
             return 0.0
 
+    # Regex for capitalized multi-word entities (e.g. "Federal Reserve", "Elon Musk")
+    _ENTITY_RE = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b")
+
+    @staticmethod
+    def _entity_overlap(a: str, b: str) -> float:
+        """Jaccard similarity on extracted named entities.
+
+        Extracts capitalized word sequences (e.g. "Federal Reserve",
+        "Elon Musk") via regex — no spaCy dependency.
+        """
+        if not a or not b:
+            return 0.0
+        entities_a = set(DiscoveryAgent._ENTITY_RE.findall(a))
+        entities_b = set(DiscoveryAgent._ENTITY_RE.findall(b))
+        if not entities_a or not entities_b:
+            return 0.0
+        return len(entities_a & entities_b) / len(entities_a | entities_b)
+
+    def _combined_similarity(self, a: str, b: str) -> float:
+        """Weighted combination of Jaccard, TF-IDF, and entity overlap."""
+        jaccard = self._jaccard(a, b)
+        tfidf = self._tfidf_similarity(a, b)
+        entity = self._entity_overlap(a, b)
+        return 0.5 * jaccard + 0.3 * tfidf + 0.2 * entity
+
     def deduplicate_articles(
         self, articles: list[dict], threshold: float = 0.6,
-        tfidf_threshold: float = 0.5,
     ) -> list[list[dict]]:
         """Group articles covering the same story.
 
         Primary: Jaccard similarity >= threshold.
-        Fallback: when Jaccard is in [0.4, threshold), use TF-IDF as tiebreaker.
+        Fallback: when Jaccard is in [0.4, threshold), use combined score
+        (0.5*jaccard + 0.3*tfidf + 0.2*entity) with threshold 0.4.
         """
+        combined_threshold = 0.4
         clusters: list[list[dict]] = []
         for article in articles:
             title = article.get("title", "")
@@ -151,8 +178,8 @@ class DiscoveryAgent:
                     placed = True
                     break
                 if jaccard >= 0.4:
-                    tfidf = self._tfidf_similarity(title, rep_title)
-                    if tfidf >= tfidf_threshold:
+                    combined = self._combined_similarity(title, rep_title)
+                    if combined >= combined_threshold:
                         cluster.append(article)
                         placed = True
                         break
