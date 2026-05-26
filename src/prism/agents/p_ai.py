@@ -88,7 +88,10 @@ class PersonalizationAgent:
             for cat, v in raw.items()
         }
 
-    def score_story(self, cluster: StoryCluster, user: User) -> float:
+    def score_story(
+        self, cluster: StoryCluster, user: User,
+        engagement_weights: dict[str, float] | None = None,
+    ) -> float:
         """Score a story's relevance to a user. Higher = more relevant."""
         score = 0.0
 
@@ -112,6 +115,14 @@ class PersonalizationAgent:
         # Source diversity: stories with more perspectives are more valuable
         score += min(cluster.article_count * 0.5, 3.0)
 
+        # Engagement-based bonus
+        if engagement_weights:
+            engagement_bonus = 0.0
+            for cat in story_categories:
+                cat = cat.strip()
+                engagement_bonus += engagement_weights.get(cat, 0.0) * 3.0
+            score += engagement_bonus
+
         return score
 
     def select_stories(
@@ -132,11 +143,11 @@ class PersonalizationAgent:
 
             # Get stories the user has already seen
             seen_ids = set()
-            engagements = session.exec(
+            user_engagements = session.exec(
                 select(Engagement).where(Engagement.user_id == user.id)
             ).all()
-            for e in engagements:
-                seen_ids.add(e.cluster_id)
+            for eng in user_engagements:
+                seen_ids.add(eng.cluster_id)
 
             # Score, filter seen, sort
             candidates = [c for c in clusters if c.id not in seen_ids]
@@ -149,7 +160,12 @@ class PersonalizationAgent:
                     if allowed_cat in (c.categories or "").split(",")
                 ]
 
-            scored = [(self.score_story(c, user), c) for c in candidates]
+            # Compute engagement weights once for this user
+            eng_weights = self._compute_engagement_weights(user.id, engine=e)
+            if eng_weights:
+                logger.info("Engagement weights for %s: %s", user.email, eng_weights)
+
+            scored = [(self.score_story(c, user, eng_weights or None), c) for c in candidates]
             scored.sort(key=lambda x: x[0], reverse=True)
 
             limit = user.briefing_depth or settings.default_briefing_stories
