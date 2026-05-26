@@ -76,7 +76,7 @@ class TestDocLs:
         result = runner.invoke(app, ["--json", "docs", "ls"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert len(data) == 6
+        assert len(data) == 8
         assert all("Name" in row for row in data)
 
 

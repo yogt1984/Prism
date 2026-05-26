@@ -16,7 +16,7 @@ from prism.cli._fmt import (
     print_table,
 )
 
-app = typer.Typer(help="Source registry management.")
+app = typer.Typer(help="Manage the news source registry — trust scores, bias labels, and RSS feeds.")
 
 
 def _find_source(session: Session, url: str):  # type: ignore[no-untyped-def]
@@ -54,7 +54,7 @@ def source_ls(
 
 @app.command("add")
 def source_add(
-    url: str,
+    url: Annotated[str, typer.Argument(help="Source domain URL (e.g. reuters.com).")],
     name: Annotated[str | None, typer.Option(help="Source display name.")] = None,
     trust: Annotated[float, typer.Option(help="Trust score 0.0-1.0.")] = 0.5,
     bias: Annotated[str, typer.Option(help="Bias label.")] = "unknown",
@@ -113,7 +113,10 @@ def source_seed() -> None:
 
 
 @app.command("trust")
-def source_trust(url: str, score: float) -> None:
+def source_trust(
+    url: Annotated[str, typer.Argument(help="Source domain URL.")],
+    score: Annotated[float, typer.Argument(help="New trust score (0.0-1.0).")],
+) -> None:
     """Update a source's trust score."""
     if not 0.0 <= score <= 1.0:
         err_console.print("[red]Trust score must be between 0.0 and 1.0[/red]")
@@ -138,7 +141,10 @@ def source_trust(url: str, score: float) -> None:
 
 
 @app.command("bias")
-def source_bias(url: str, label: str) -> None:
+def source_bias(
+    url: Annotated[str, typer.Argument(help="Source domain URL.")],
+    label: Annotated[str, typer.Argument(help="Bias label (left, center_left, center, center_right, right, unknown).")],
+) -> None:
     """Update a source's bias label."""
     from prism.models import BiasLabel
     try:
@@ -167,7 +173,7 @@ def source_bias(url: str, label: str) -> None:
 
 
 @app.command("toggle")
-def source_toggle(url: str) -> None:
+def source_toggle(url: Annotated[str, typer.Argument(help="Source domain URL.")]) -> None:
     """Activate or deactivate a source."""
     engine = _get_engine()
     with Session(engine) as session:

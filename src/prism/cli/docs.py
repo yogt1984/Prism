@@ -9,7 +9,7 @@ from rich.panel import Panel
 
 from prism.cli._fmt import console, err_console, is_json_mode, print_json
 
-app = typer.Typer(help="In-terminal documentation viewer.")
+app = typer.Typer(help="Browse and search project documentation in the terminal.")
 
 # Resolve project root (three levels up from this file: cli -> prism -> src -> root)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -21,6 +21,8 @@ _DOC_MAP: dict[str, str] = {
     "arch": "CLAUDE.md",
     "stack": "TECH_STACK.md",
     "readme": "README.md",
+    "deploy": "docs/deployment.md",
+    "tasks": "docs/tasks.md",
 }
 
 
@@ -72,6 +74,8 @@ _doc_command("roadmap", "implementation roadmap")
 _doc_command("arch", "architecture & constraints (CLAUDE.md)")
 _doc_command("stack", "technology stack")
 _doc_command("readme", "project README")
+_doc_command("deploy", "deployment guide")
+_doc_command("tasks", "task plan")
 
 
 @app.command("ls")
@@ -90,7 +94,7 @@ def docs_ls() -> None:
 
 @app.command("search")
 def docs_search(
-    query: str,
+    query: Annotated[str, typer.Argument(help="Search term.")],
     context: Annotated[
         int, typer.Option("-C", help="Lines of context around matches."),
     ] = 2,
