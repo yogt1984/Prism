@@ -22,6 +22,7 @@ from prism.models import (
     Source,
     StoryCluster,
     StoryStatus,
+    TopicResonance,
     User,
 )
 from prism.onboarding import VALID_INTERESTS, RegistrationError, register_user
@@ -164,8 +165,24 @@ class StoryOut(BaseModel):
     article_count: int
     prompt_version: str
     quality_score: float
+    resonance_score: float
     first_seen: datetime
     last_updated: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ResonanceOut(BaseModel):
+    cluster_id: int
+    resonance: float
+    momentum: float
+    peak_resonance: float
+    mention_count: int
+    source_count: int
+    authority_weighted_sum: float
+    breadth: float
+    window_hours: int
+    computed_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -343,14 +360,23 @@ def list_sources(
 # ── Stories ───────────────────────────────────────────────────────────
 
 
+_VALID_STORY_SORTS = {"first_seen", "resonance"}
+
+
 @router.get("/stories", response_model=list[StoryOut])
 def list_stories(
     status: Annotated[str | None, Query(description="Filter by status (raw/analyzed)")] = None,
+    sort: Annotated[str, Query(description="Sort field: first_seen (default) or resonance")] = "first_seen",
     limit: Annotated[int, Query(ge=1, le=100, description="Max results")] = 20,
     offset: Annotated[int, Query(ge=0, description="Skip N results")] = 0,
     session: Session = Depends(_get_session),
 ) -> list[StoryOut]:
     """List story clusters with pagination."""
+    if sort not in _VALID_STORY_SORTS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid sort '{sort}'. Valid: {', '.join(sorted(_VALID_STORY_SORTS))}",
+        )
     stmt = select(StoryCluster)
     if status is not None:
         status_lower = status.lower()
@@ -360,7 +386,11 @@ def list_stories(
                 detail=f"Invalid status '{status}'. Valid: {', '.join(s.value for s in StoryStatus)}",
             )
         stmt = stmt.where(StoryCluster.status == status_lower)
-    stmt = stmt.order_by(col(StoryCluster.first_seen).desc()).offset(offset).limit(limit)
+    if sort == "resonance":
+        stmt = stmt.order_by(col(StoryCluster.resonance_score).desc())
+    else:
+        stmt = stmt.order_by(col(StoryCluster.first_seen).desc())
+    stmt = stmt.offset(offset).limit(limit)
     rows = session.exec(stmt).all()
     return [StoryOut.model_validate(r) for r in rows]
 
@@ -386,6 +416,25 @@ def get_story(
     data["articles"] = [ArticleOut.model_validate(a).model_dump() for a in articles]
     data["perspectives"] = [PerspectiveOut.model_validate(p).model_dump() for p in perspectives]
     return StoryDetailOut(**data)
+
+
+@router.get("/stories/{story_id}/resonance", response_model=ResonanceOut)
+def get_story_resonance(
+    story_id: int,
+    session: Session = Depends(_get_session),
+) -> ResonanceOut:
+    """Get the full resonance breakdown for a story."""
+    cluster = session.get(StoryCluster, story_id)
+    if cluster is None:
+        raise HTTPException(status_code=404, detail="Story not found")
+
+    tr = session.exec(
+        select(TopicResonance).where(TopicResonance.cluster_id == story_id)
+    ).first()
+    if tr is None:
+        raise HTTPException(status_code=404, detail="Resonance data not yet computed for this story")
+
+    return ResonanceOut.model_validate(tr)
 
 
 # ── Users ─────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ detects sentiment/bias, and categorizes by topic.
 import json
 import logging
 import time
+from datetime import UTC, datetime
 
 import anthropic
 from sqlalchemy import Engine
@@ -15,7 +16,7 @@ from sqlmodel import Session, select
 from prism.circuit_breaker import claude_breaker
 from prism.config import settings
 from prism.db import get_engine
-from prism.metrics import timed_cycle
+from prism.metrics import resonance_computed_total, timed_cycle
 from prism.models import (
     Article,
     BiasLabel,
@@ -23,7 +24,9 @@ from prism.models import (
     Source,
     StoryCluster,
     StoryStatus,
+    TopicResonance,
 )
+from prism.resonance import MentionInput, ResonanceConfig, compute_momentum, compute_resonance
 from prism.retry import retry_on_transient
 
 logger = logging.getLogger(__name__)
@@ -274,6 +277,82 @@ class AnalysisAgent:
                 cluster.headline,
                 len(result.get("perspectives", [])),
             )
+
+            # Compute resonance (failure must not block analysis)
+            try:
+                self._update_resonance(session, cluster, articles, trust_map)
+            except Exception:
+                logger.exception(
+                    "Resonance computation failed for cluster %d", cluster_id,
+                )
+
+    @staticmethod
+    def _update_resonance(
+        session: Session,
+        cluster: StoryCluster,
+        articles: list[Article],
+        trust_map: dict[int, float],
+    ) -> None:
+        """Compute and upsert resonance for a cluster."""
+        now = datetime.now(UTC)
+        config = ResonanceConfig(
+            half_life_hours=float(settings.resonance_half_life_hours),
+            platform_median=float(settings.resonance_platform_median),
+        )
+
+        mentions = [
+            MentionInput(
+                source_id=a.source_id,
+                trust_score=trust_map.get(a.source_id, 0.5),
+                reactions=0,
+                published_at=a.published_at or a.fetched_at,
+            )
+            for a in articles
+        ]
+
+        result = compute_resonance(mentions, now, config)
+
+        # Fetch existing row for momentum + peak
+        existing = session.exec(
+            select(TopicResonance)
+            .where(TopicResonance.cluster_id == cluster.id)
+            .order_by(TopicResonance.computed_at.desc())  # type: ignore[union-attr]
+        ).first()
+
+        previous_resonance = existing.resonance if existing else 0.0
+        momentum = compute_momentum(result.resonance, previous_resonance)
+        peak = max(result.resonance, existing.peak_resonance if existing else 0.0)
+
+        if existing:
+            existing.resonance = result.resonance
+            existing.momentum = momentum
+            existing.peak_resonance = peak
+            existing.mention_count = result.mention_count
+            existing.source_count = result.source_count
+            existing.authority_weighted_sum = result.authority_weighted_sum
+            existing.breadth = result.breadth
+            existing.window_hours = settings.resonance_window_hours
+            existing.computed_at = now
+            session.add(existing)
+        else:
+            tr = TopicResonance(
+                cluster_id=cluster.id,
+                resonance=result.resonance,
+                momentum=momentum,
+                peak_resonance=peak,
+                mention_count=result.mention_count,
+                source_count=result.source_count,
+                authority_weighted_sum=result.authority_weighted_sum,
+                breadth=result.breadth,
+                window_hours=settings.resonance_window_hours,
+                computed_at=now,
+            )
+            session.add(tr)
+
+        cluster.resonance_score = result.resonance
+        session.add(cluster)
+        session.commit()
+        resonance_computed_total.inc()
 
     @timed_cycle("analysis")
     def process_pending(self, engine: Engine | None = None) -> None:

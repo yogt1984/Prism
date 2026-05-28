@@ -32,6 +32,23 @@ discover  -->  analyze  -->  personalize  -->  deliver
 Four agents communicate via a DB state machine (`RAW -> ANALYZED -> delivered`).
 No message queue, no Redis -- just SQLite in WAL mode.
 
+### Resonance -- Media Impact Score
+
+Each story cluster gets a **Resonance** score measuring its media footprint:
+
+```
+Resonance = breadth(sources) x SUM( trust x engagement x decay )
+```
+
+- **Trust weighting** -- source authority from the registry (Reuters >> unknown blog)
+- **Engagement** -- log-scaled audience reactions, normalized per platform
+- **Breadth** -- source diversity (penalizes single-outlet repetition)
+- **Decay** -- exponential (24h half-life), stale stories fade naturally
+
+Derived signals: **Momentum** (rising/fading), **Peak Resonance**, **Persistence**.
+Resonance feeds into P_AI ranking and is exposed via API and CLI.
+See [docs/resonance_specs.md](docs/resonance_specs.md) for the full specification.
+
 ## Quick Start
 
 ### With Docker (recommended)
@@ -68,8 +85,9 @@ Prism exposes a FastAPI-based REST API for programmatic access. Run with
 | GET | `/health` | Liveness probe |
 | GET | `/config` | Non-secret runtime configuration, categories, tier limits |
 | GET | `/sources` | List sources (`?active=true/false` filter) |
-| GET | `/stories` | List stories (`?status=`, `?limit=`, `?offset=`) |
+| GET | `/stories` | List stories (`?status=`, `?sort=resonance`, `?limit=`, `?offset=`) |
 | GET | `/stories/{id}` | Story detail with articles + perspectives |
+| GET | `/stories/{id}/resonance` | Full resonance score breakdown |
 | POST | `/users` | Register a new user |
 
 **Authenticated endpoints** (require `X-API-Key` header, Pro tier):
@@ -96,7 +114,7 @@ prism status [--watch]       live pipeline dashboard
 prism cycle discover|analyze|brief   trigger individual agents
 prism user   add|ls|show|edit|rm     manage subscribers
 prism source ls|add|seed|trust|bias  source registry
-prism story  ls|show|stats           inspect story clusters
+prism story  ls|show|stats|resonance  inspect story clusters + resonance
 prism briefing ls|show|preview|resend  briefing management
 prism config show|check|env          configuration & health
 prism db     init|stats|export       database management
@@ -117,11 +135,14 @@ progress messages), `--db <url>` (override database).
 | `DISCOVERY_INTERVAL_HOURS` | No | `2` |
 | `MAX_STORIES_PER_CYCLE` | No | `50` |
 | `DEFAULT_BRIEFING_STORIES` | No | `10` |
+| `RESONANCE_HALF_LIFE_HOURS` | No | `24` |
+| `RESONANCE_WINDOW_HOURS` | No | `72` |
+| `RESONANCE_RANKING_WEIGHT` | No | `0.3` |
 
 ## Testing
 
 ```bash
-pytest                       # 495 tests
+pytest                       # 850+ tests
 ruff check src/ tests/       # lint
 ```
 
@@ -132,15 +153,16 @@ src/prism/
   main.py        scheduler orchestration (APScheduler)
   config.py      settings via pydantic-settings
   db.py          SQLite + WAL mode
-  models.py      Source, StoryCluster, Article, Perspective, User, Briefing
+  models.py      Source, StoryCluster, Article, Perspective, User, Briefing, TopicResonance
   retry.py       exponential backoff for transient API failures
   alerts.py      ntfy.sh notification forwarding
+  resonance.py   topic media impact score computation
   onboarding.py  user registration with email/interest validation
   seed.py        30 curated sources across the bias spectrum
   agents/
     d_ai.py      discovery: Brave API + RSS + Jaccard dedup
-    a_ai.py      analysis: Claude structured output + token budget
-    p_ai.py      personalization: scoring + story selection
+    a_ai.py      analysis: Claude structured output + token budget + resonance
+    p_ai.py      personalization: scoring + story selection + resonance ranking
     w_ai.py      writer: briefing generation + email delivery
   api/
     app.py       FastAPI application factory
@@ -160,6 +182,7 @@ src/prism/
     docs.py      in-terminal markdown viewer + search
 docs/
   specifications.md    full system requirements (agents, data model, reliability)
+  resonance_specs.md   resonance metric definition, formula, implementation tasks
   cli-specification.md CLI command tree, output examples, milestones
 ```
 
@@ -182,6 +205,9 @@ docs/
   stories), user CRUD, briefing list/detail/trigger, engagement recording,
   API key auth with pro-tier gating, OpenAPI docs, E2E integration tests,
   `prism db` CLI commands
+- **Resonance**: Topic media impact score -- composite metric (trust x
+  engagement x breadth x decay), A_AI integration, API/CLI exposure,
+  P_AI ranking boost, 39 new tests
 
 ## Tech Stack
 

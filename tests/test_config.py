@@ -54,6 +54,12 @@ def test_settings_defaults(monkeypatch):
     assert s.briefing_schedule_cron == "0 7 * * *"
     assert s.briefing_from_email == "briefing@yourdomain.com"
 
+    # Resonance
+    assert s.resonance_half_life_hours == 24
+    assert s.resonance_window_hours == 72
+    assert s.resonance_momentum_delta_hours == 6
+    assert s.resonance_platform_median == 50
+
 
 def test_settings_env_override(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
@@ -62,3 +68,16 @@ def test_settings_env_override(monkeypatch):
     s = Settings()  # type: ignore[call-arg]
     assert s.discovery_interval_hours == 6
     assert s.max_input_tokens == 4000
+
+
+def test_resonance_settings_env_override(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("RESONANCE_HALF_LIFE_HOURS", "48")
+    monkeypatch.setenv("RESONANCE_WINDOW_HOURS", "120")
+    monkeypatch.setenv("RESONANCE_MOMENTUM_DELTA_HOURS", "12")
+    monkeypatch.setenv("RESONANCE_PLATFORM_MEDIAN", "100")
+    s = Settings()  # type: ignore[call-arg]
+    assert s.resonance_half_life_hours == 48
+    assert s.resonance_window_hours == 120
+    assert s.resonance_momentum_delta_hours == 12
+    assert s.resonance_platform_median == 100

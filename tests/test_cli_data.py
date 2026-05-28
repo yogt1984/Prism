@@ -22,6 +22,7 @@ from prism.models import (
     Source,
     StoryCluster,
     StoryStatus,
+    TopicResonance,
     User,
 )
 
@@ -567,3 +568,116 @@ class TestBriefingShow:
             p.stop()
         data = json.loads(result.output)
         assert data["story_count"] == 3
+
+
+# ─── Story resonance commands (T-RES.7) ─────────────────────
+
+
+def _seed_resonance(engine, cluster_id, resonance=5.0, momentum=1.5):
+    from sqlmodel import Session
+    with Session(engine) as s:
+        tr = TopicResonance(
+            cluster_id=cluster_id,
+            resonance=resonance,
+            momentum=momentum,
+            peak_resonance=resonance,
+            mention_count=3,
+            source_count=2,
+            authority_weighted_sum=2.1,
+            breadth=1.58,
+            window_hours=72,
+        )
+        s.add(tr)
+        s.commit()
+        return tr.id
+
+
+class TestStoryLsResonance:
+    def test_ls_sort_resonance(self, db_engine):
+        sid = _seed_source(db_engine)
+        cid1 = _seed_cluster(db_engine, sid, headline="Low res")
+        cid2 = _seed_cluster(db_engine, sid, headline="High res")
+        from sqlmodel import Session
+        with Session(db_engine) as s:
+            c1 = s.get(StoryCluster, cid1)
+            c1.resonance_score = 1.0
+            c2 = s.get(StoryCluster, cid2)
+            c2.resonance_score = 10.0
+            s.add(c1)
+            s.add(c2)
+            s.commit()
+
+        patches = _patch_engine(db_engine)
+        for p in patches:
+            p.start()
+        result = runner.invoke(app, ["story", "ls", "--sort", "resonance"])
+        for p in patches:
+            p.stop()
+        assert result.exit_code == 0
+        # High res should appear before Low res
+        high_pos = result.output.index("High res")
+        low_pos = result.output.index("Low res")
+        assert high_pos < low_pos
+
+    def test_ls_shows_resonance_column(self, db_engine):
+        sid = _seed_source(db_engine)
+        _seed_cluster(db_engine, sid)
+        patches = _patch_engine(db_engine)
+        for p in patches:
+            p.start()
+        result = runner.invoke(app, ["story", "ls"])
+        for p in patches:
+            p.stop()
+        assert result.exit_code == 0
+        assert "Resonance" in result.output
+
+
+class TestStoryResonance:
+    def test_resonance_command(self, db_engine):
+        sid = _seed_source(db_engine)
+        cid = _seed_cluster(db_engine, sid)
+        _seed_resonance(db_engine, cid, resonance=5.123, momentum=1.5)
+        patches = _patch_engine(db_engine)
+        for p in patches:
+            p.start()
+        result = runner.invoke(app, ["story", "resonance", str(cid)])
+        for p in patches:
+            p.stop()
+        assert result.exit_code == 0
+        assert "5.123" in result.output
+        assert "1.500" in result.output
+
+    def test_resonance_not_found(self, db_engine):
+        patches = _patch_engine(db_engine)
+        for p in patches:
+            p.start()
+        result = runner.invoke(app, ["story", "resonance", "9999"])
+        for p in patches:
+            p.stop()
+        assert result.exit_code == 1
+
+    def test_resonance_no_data(self, db_engine):
+        sid = _seed_source(db_engine)
+        cid = _seed_cluster(db_engine, sid)
+        patches = _patch_engine(db_engine)
+        for p in patches:
+            p.start()
+        result = runner.invoke(app, ["story", "resonance", str(cid)])
+        for p in patches:
+            p.stop()
+        assert result.exit_code == 0
+        assert "No resonance data" in result.output
+
+    def test_resonance_json(self, db_engine):
+        sid = _seed_source(db_engine)
+        cid = _seed_cluster(db_engine, sid)
+        _seed_resonance(db_engine, cid, resonance=8.0)
+        patches = _patch_engine(db_engine)
+        for p in patches:
+            p.start()
+        result = runner.invoke(app, ["--json", "story", "resonance", str(cid)])
+        for p in patches:
+            p.stop()
+        data = json.loads(result.output)
+        assert data["resonance"] == 8.0
+        assert data["mention_count"] == 3

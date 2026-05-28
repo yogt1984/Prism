@@ -675,3 +675,105 @@ class TestEngagementScoring:
         with patch.object(p_ai, "_compute_engagement_weights", wraps=p_ai._compute_engagement_weights) as mock:
             p_ai.select_stories(detached, engine=db_engine)
             assert mock.call_count == 1
+
+
+# --- T-RES.8: Resonance integrated into ranking ---
+
+
+class TestResonanceRanking:
+    """T-RES.8: Verify resonance_score affects story ranking in P_AI."""
+
+    def test_equal_interest_higher_resonance_wins(self):
+        """Between two stories with equal interest match, higher resonance ranks first."""
+        p_ai = PersonalizationAgent()
+        user = User(email="t@t.com", interests="finance")
+        low_res = StoryCluster(
+            categories="finance", status=StoryStatus.ANALYZED,
+            article_count=2, resonance_score=1.0,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        high_res = StoryCluster(
+            categories="finance", status=StoryStatus.ANALYZED,
+            article_count=2, resonance_score=20.0,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        assert p_ai.score_story(high_res, user) > p_ai.score_story(low_res, user)
+
+    def test_interest_dominates_resonance(self):
+        """A low-interest high-resonance story does not outrank a high-interest low-resonance story."""
+        p_ai = PersonalizationAgent()
+        user = User(email="t@t.com", interests="finance")
+        matching = StoryCluster(
+            categories="finance", status=StoryStatus.ANALYZED,
+            article_count=1, resonance_score=1.0,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        non_matching = StoryCluster(
+            categories="sports", status=StoryStatus.ANALYZED,
+            article_count=1, resonance_score=10.0,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        assert p_ai.score_story(matching, user) > p_ai.score_story(non_matching, user)
+
+    def test_zero_weight_disables_boost(self):
+        """resonance_ranking_weight = 0.0 disables the boost entirely."""
+        from unittest.mock import patch
+        p_ai = PersonalizationAgent()
+        user = User(email="t@t.com", interests="finance")
+        cluster = StoryCluster(
+            categories="finance", status=StoryStatus.ANALYZED,
+            article_count=2, resonance_score=100.0,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        with patch("prism.agents.p_ai.settings") as mock_settings:
+            mock_settings.resonance_ranking_weight = 0.0
+            mock_settings.default_briefing_stories = 10
+            mock_settings.max_briefing_stories = 25
+            score_disabled = p_ai.score_story(cluster, user)
+
+        cluster_no_res = StoryCluster(
+            categories="finance", status=StoryStatus.ANALYZED,
+            article_count=2, resonance_score=0.0,
+            first_seen=datetime.now(UTC) - timedelta(hours=1),
+        )
+        with patch("prism.agents.p_ai.settings") as mock_settings:
+            mock_settings.resonance_ranking_weight = 0.0
+            mock_settings.default_briefing_stories = 10
+            mock_settings.max_briefing_stories = 25
+            score_no_res = p_ai.score_story(cluster_no_res, user)
+
+        assert score_disabled == score_no_res
+
+    def test_resonance_changes_ranking_order(self, db_engine):
+        """Resonance score can reorder stories with equal interest/recency."""
+        p_ai = PersonalizationAgent()
+        with Session(db_engine) as s:
+            user = User(email="rank@t.com", interests="finance", is_pro=True)
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            uid = user.id
+
+            c1 = StoryCluster(
+                headline="Low resonance",
+                categories="finance", status=StoryStatus.ANALYZED,
+                article_count=2, resonance_score=0.5,
+                first_seen=datetime.now(UTC) - timedelta(hours=1),
+            )
+            c2 = StoryCluster(
+                headline="High resonance",
+                categories="finance", status=StoryStatus.ANALYZED,
+                article_count=2, resonance_score=50.0,
+                first_seen=datetime.now(UTC) - timedelta(hours=1),
+            )
+            s.add(c1)
+            s.add(c2)
+            s.commit()
+            s.refresh(c1)
+            s.refresh(c2)
+            c1_id, c2_id = c1.id, c2.id
+
+        detached = User(id=uid, email="rank@t.com", interests="finance", is_pro=True)
+        stories = p_ai.select_stories(detached, engine=db_engine)
+        ids = [c.id for c in stories]
+        assert ids.index(c2_id) < ids.index(c1_id)

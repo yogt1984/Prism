@@ -123,6 +123,11 @@ class PersonalizationAgent:
                 engagement_bonus += engagement_weights.get(cat, 0.0) * 3.0
             score += engagement_bonus
 
+        # Resonance boost: weighted contribution from media impact score
+        res_weight = settings.resonance_ranking_weight
+        if res_weight > 0 and cluster.resonance_score > 0:
+            score += res_weight * cluster.resonance_score
+
         return score
 
     def select_stories(
