@@ -14,6 +14,7 @@ from sqlmodel import Session, select
 
 from prism.agents.a_ai import AnalysisAgent
 from prism.db import init_db
+from prism.metrics import reset_all as reset_metrics, resonance_computed_total
 from prism.models import (
     Article,
     BiasLabel,
@@ -21,6 +22,7 @@ from prism.models import (
     Source,
     StoryCluster,
     StoryStatus,
+    TopicResonance,
 )
 
 
@@ -523,3 +525,106 @@ def test_perspectives_capped_at_config_limit(db_engine):
         summaries = [p.summary for p in stored]
         assert summaries[0] == "Perspective from outlet 0"
         assert summaries[4] == "Perspective from outlet 4"
+
+
+# --- T-RES.5: Resonance wired into A_AI ---
+
+
+@pytest.fixture(autouse=True)
+def _reset_metrics_fixture():
+    reset_metrics()
+    yield
+
+
+def test_analyze_cluster_creates_resonance(db_engine):
+    """After analyze_cluster, a TopicResonance row exists for that cluster."""
+    agent = _make_mock_agent()
+    with Session(db_engine) as s:
+        cluster = _seed_cluster(s)
+        cluster_id = cluster.id
+
+    agent.analyze_cluster(cluster_id, db_engine)
+
+    with Session(db_engine) as s:
+        tr = s.exec(
+            select(TopicResonance).where(TopicResonance.cluster_id == cluster_id)
+        ).first()
+        assert tr is not None
+        assert tr.resonance > 0.0
+        assert tr.mention_count == 3  # _seed_cluster creates 3 articles
+        assert tr.source_count == 1  # all from same source
+
+
+def test_resonance_score_matches_cluster(db_engine):
+    """StoryCluster.resonance_score matches TopicResonance.resonance."""
+    agent = _make_mock_agent()
+    with Session(db_engine) as s:
+        cluster = _seed_cluster(s)
+        cluster_id = cluster.id
+
+    agent.analyze_cluster(cluster_id, db_engine)
+
+    with Session(db_engine) as s:
+        cluster = s.get(StoryCluster, cluster_id)
+        tr = s.exec(
+            select(TopicResonance).where(TopicResonance.cluster_id == cluster_id)
+        ).first()
+        assert cluster.resonance_score == tr.resonance
+
+
+def test_reanalysis_updates_resonance(db_engine):
+    """Re-running analysis on the same cluster updates (not duplicates) the resonance row."""
+    agent = _make_mock_agent()
+    with Session(db_engine) as s:
+        cluster = _seed_cluster(s)
+        cluster_id = cluster.id
+
+    agent.analyze_cluster(cluster_id, db_engine)
+
+    # Reset status to RAW so we can re-analyze
+    with Session(db_engine) as s:
+        cluster = s.get(StoryCluster, cluster_id)
+        cluster.status = StoryStatus.RAW
+        s.add(cluster)
+        s.commit()
+
+    agent.analyze_cluster(cluster_id, db_engine)
+
+    with Session(db_engine) as s:
+        rows = s.exec(
+            select(TopicResonance).where(TopicResonance.cluster_id == cluster_id)
+        ).all()
+        assert len(rows) == 1  # updated, not duplicated
+
+
+def test_resonance_metric_increments(db_engine):
+    """resonance_computed_total counter increments on each computation."""
+    agent = _make_mock_agent()
+    with Session(db_engine) as s:
+        cluster = _seed_cluster(s)
+        cluster_id = cluster.id
+
+    before = resonance_computed_total.value
+    agent.analyze_cluster(cluster_id, db_engine)
+    assert resonance_computed_total.value == before + 1
+
+
+def test_resonance_failure_does_not_block_analysis(db_engine, caplog):
+    """Resonance computation failure does not block analysis."""
+    agent = _make_mock_agent()
+    with Session(db_engine) as s:
+        cluster = _seed_cluster(s)
+        cluster_id = cluster.id
+
+    with patch(
+        "prism.agents.a_ai.compute_resonance",
+        side_effect=RuntimeError("boom"),
+    ):
+        with caplog.at_level(logging.ERROR):
+            agent.analyze_cluster(cluster_id, db_engine)
+
+    # Analysis should still have completed
+    with Session(db_engine) as s:
+        cluster = s.get(StoryCluster, cluster_id)
+        assert cluster.status == StoryStatus.ANALYZED
+    assert "Resonance computation failed" in caplog.text

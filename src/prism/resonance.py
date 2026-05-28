@@ -82,7 +82,13 @@ def compute_resonance(
 
         # Age in hours
         if m.published_at is not None:
-            delta = (now - m.published_at).total_seconds() / 3600.0
+            pub = m.published_at
+            # Normalize timezone awareness for subtraction
+            if pub.tzinfo is None and now.tzinfo is not None:
+                pub = pub.replace(tzinfo=now.tzinfo)
+            elif pub.tzinfo is not None and now.tzinfo is None:
+                now = now.replace(tzinfo=pub.tzinfo)
+            delta = (now - pub).total_seconds() / 3600.0
         else:
             delta = 0.0
 
