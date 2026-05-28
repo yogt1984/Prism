@@ -64,6 +64,7 @@ class StoryCluster(SQLModel, table=True):
     article_count: int = 0
     prompt_version: str = ""  # analysis prompt version used by A_AI
     quality_score: float = 0.0  # 0.0-1.0, analysis output quality
+    resonance_score: float = 0.0  # latest computed resonance (denormalized)
     first_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_updated: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -121,6 +122,25 @@ class Engagement(SQLModel, table=True):
     action: str  # "open", "read", "save", "skip"
     read_time_sec: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+# --- Briefings ---
+
+# --- Resonance ---
+
+class TopicResonance(SQLModel, table=True):
+    """Computed media-impact score for a story cluster."""
+    id: int | None = Field(default=None, primary_key=True)
+    cluster_id: int = Field(foreign_key="storycluster.id", index=True)
+    resonance: float = 0.0
+    momentum: float = 0.0
+    peak_resonance: float = 0.0
+    mention_count: int = 0
+    source_count: int = 0
+    authority_weighted_sum: float = 0.0
+    breadth: float = 0.0
+    window_hours: int = 72
+    computed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # --- Briefings ---

@@ -70,7 +70,8 @@ class TestAlembicMigrations:
         tables = set(inspect(eng).get_table_names())
         expected = {
             "source", "storycluster", "article", "perspective",
-            "user", "engagement", "briefing", "alembic_version",
+            "user", "engagement", "briefing", "topicresonance",
+            "alembic_version",
         }
         assert expected == tables
         eng.dispose()
@@ -101,7 +102,8 @@ class TestAlembicMigrations:
         eng = create_engine(url, connect_args={"check_same_thread": False})
         cols = {c["name"] for c in inspect(eng).get_columns("storycluster")}
         expected = {"id", "headline", "summary", "categories", "status",
-                    "article_count", "prompt_version", "quality_score", "first_seen", "last_updated"}
+                    "article_count", "prompt_version", "quality_score",
+                    "resonance_score", "first_seen", "last_updated"}
         assert expected == cols
         eng.dispose()
 
@@ -113,7 +115,7 @@ class TestAlembicMigrations:
         with eng.connect() as conn:
             row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
             assert row is not None
-            assert row[0] == "004"
+            assert row[0] == "005"
         eng.dispose()
 
     def test_downgrade_base_drops_app_tables(self, tmp_path):
@@ -274,7 +276,7 @@ class TestInitDbAlembicInteraction:
         with engine.connect() as conn:
             row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
             assert row is not None
-            assert row[0] == "004"
+            assert row[0] == "005"
         engine.dispose()
 
     def test_schema_matches_between_init_db_and_alembic(self, tmp_path, _reset_engine):
@@ -341,7 +343,7 @@ class TestCliDbUpgrade:
         with engine.connect() as conn:
             row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
             assert row is not None
-            assert row[0] == "004"
+            assert row[0] == "005"
         engine.dispose()
 
     def test_cli_upgrade_specific_revision(self, tmp_path):
@@ -592,7 +594,7 @@ class TestDatetimeIndexMigration:
         eng = create_engine(url, connect_args={"check_same_thread": False})
         with eng.connect() as conn:
             row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
-            assert row[0] == "004"
+            assert row[0] == "005"
         eng.dispose()
 
     def test_explain_query_plan_uses_index(self, tmp_path):

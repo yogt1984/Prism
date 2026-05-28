@@ -9,6 +9,7 @@ from prism.models import (
     Source,
     StoryCluster,
     StoryStatus,
+    TopicResonance,
     User,
 )
 
@@ -58,3 +59,52 @@ def test_categories_exist():
     assert Category.POLITICS == "politics"
     assert Category.TECHNOLOGY == "technology"
     assert Category.SPORTS == "sports"
+
+
+def test_story_cluster_resonance_default():
+    cluster = StoryCluster()
+    assert cluster.resonance_score == 0.0
+
+
+def test_topic_resonance_roundtrip(tmp_path):
+    """Create a TopicResonance row, persist it, and read it back."""
+    from sqlmodel import Session, SQLModel, create_engine
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    SQLModel.metadata.create_all(engine)
+
+    # Need a source and cluster for FK constraints
+    with Session(engine) as session:
+        source = Source(name="Reuters", url="https://reuters.com")
+        session.add(source)
+        session.flush()
+        cluster = StoryCluster(headline="Test", article_count=3)
+        session.add(cluster)
+        session.flush()
+
+        tr = TopicResonance(
+            cluster_id=cluster.id,
+            resonance=12.5,
+            momentum=3.2,
+            peak_resonance=15.0,
+            mention_count=8,
+            source_count=4,
+            authority_weighted_sum=6.1,
+            breadth=2.32,
+            window_hours=72,
+        )
+        session.add(tr)
+        session.commit()
+
+        loaded = session.get(TopicResonance, tr.id)
+        assert loaded is not None
+        assert loaded.resonance == 12.5
+        assert loaded.momentum == 3.2
+        assert loaded.peak_resonance == 15.0
+        assert loaded.mention_count == 8
+        assert loaded.source_count == 4
+        assert loaded.authority_weighted_sum == 6.1
+        assert loaded.breadth == 2.32
+        assert loaded.window_hours == 72
+        assert loaded.computed_at is not None
