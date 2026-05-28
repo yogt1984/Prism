@@ -38,6 +38,7 @@ def _age_str(dt: datetime) -> str:
 def story_ls(
     status: Annotated[str | None, typer.Option(help="Filter by status (raw|analyzed).")] = None,
     category: Annotated[str | None, typer.Option(help="Filter by category.")] = None,
+    sort: Annotated[str, typer.Option(help="Sort field: first_seen (default) or resonance.")] = "first_seen",
     limit: Annotated[int, typer.Option(help="Max rows to show.")] = 20,
 ) -> None:
     """List recent story clusters."""
@@ -49,16 +50,19 @@ def story_ls(
             stmt = stmt.where(StoryCluster.status == status)
         if category:
             stmt = stmt.where(StoryCluster.categories.contains(category))  # type: ignore[union-attr]
-        clusters = session.exec(
-            stmt.order_by(StoryCluster.first_seen.desc()).limit(limit)  # type: ignore[union-attr]
-        ).all()
+        if sort == "resonance":
+            stmt = stmt.order_by(StoryCluster.resonance_score.desc())  # type: ignore[union-attr]
+        else:
+            stmt = stmt.order_by(StoryCluster.first_seen.desc())  # type: ignore[union-attr]
+        clusters = session.exec(stmt.limit(limit)).all()
 
     rows = [
         [str(c.id), c.headline[:60] or "(no headline)", c.status,
-         str(c.article_count), c.categories or "-", _age_str(c.first_seen)]
+         str(c.article_count), f"{c.resonance_score:.1f}",
+         c.categories or "-", _age_str(c.first_seen)]
         for c in clusters
     ]
-    print_table("Stories", ["ID", "Headline", "Status", "Articles", "Categories", "Age"], rows)
+    print_table("Stories", ["ID", "Headline", "Status", "Articles", "Resonance", "Categories", "Age"], rows)
 
 
 @app.command("show")
@@ -209,3 +213,61 @@ def story_stats() -> None:
             pct = count / total * 100 if total else 0
             console.print(f"    {cat:<14s} {'#' * bar_len} {pct:.0f}%")
     console.print()
+
+
+@app.command("resonance")
+def story_resonance(
+    cluster_id: Annotated[int, typer.Argument(help="Story cluster ID.")],
+) -> None:
+    """Show full resonance breakdown for a story cluster."""
+    from prism.models import StoryCluster, TopicResonance
+    engine = _get_engine()
+    with Session(engine) as session:
+        cluster = session.get(StoryCluster, cluster_id)
+        if not cluster:
+            err_console.print(f"[red]Cluster not found:[/red] {cluster_id}")
+            raise typer.Exit(1)
+
+        tr = session.exec(
+            select(TopicResonance).where(TopicResonance.cluster_id == cluster_id)
+        ).first()
+
+    if is_json_mode():
+        if tr is None:
+            print_json({"cluster_id": cluster_id, "resonance": None,
+                        "message": "Resonance not yet computed"})
+        else:
+            print_json({
+                "cluster_id": tr.cluster_id,
+                "resonance": tr.resonance,
+                "momentum": tr.momentum,
+                "peak_resonance": tr.peak_resonance,
+                "mention_count": tr.mention_count,
+                "source_count": tr.source_count,
+                "authority_weighted_sum": tr.authority_weighted_sum,
+                "breadth": tr.breadth,
+                "window_hours": tr.window_hours,
+                "computed_at": str(tr.computed_at),
+            })
+        return
+
+    if tr is None:
+        console.print(f"  No resonance data for cluster #{cluster_id}.")
+        return
+
+    from rich.panel import Panel
+    lines = [
+        f"Resonance:             {tr.resonance:.3f}",
+        f"Momentum:              {tr.momentum:+.3f}",
+        f"Peak Resonance:        {tr.peak_resonance:.3f}",
+        f"Mention Count:         {tr.mention_count}",
+        f"Source Count:           {tr.source_count}",
+        f"Authority Weighted Sum: {tr.authority_weighted_sum:.3f}",
+        f"Breadth:               {tr.breadth:.3f}",
+        f"Window (hours):        {tr.window_hours}",
+        f"Computed At:           {tr.computed_at}",
+    ]
+    console.print(Panel(
+        "\n".join(lines),
+        title=f"Resonance — {cluster.headline or f'Cluster #{cluster_id}'}",
+    ))
