@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     resonance_window_hours: int = 72
     resonance_momentum_delta_hours: int = 6
     resonance_platform_median: int = 50
+    resonance_ranking_weight: float = 0.3
 
     # Monitoring
     ntfy_topic: str = ""  # ntfy.sh topic for push alerts (empty = disabled)
