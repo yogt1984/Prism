@@ -19,6 +19,45 @@ origin. Bias is shown, not hidden.
 
 ---
 
+## Resonance -- Media Impact Score
+
+Resonance is Prism's core metric for measuring how much media attention a topic
+commands. Every story cluster gets a continuously updated score:
+
+```
+Resonance = breadth(sources) × Σ( trust × engagement × decay )
+```
+
+| Component | What it measures |
+|-----------|-----------------|
+| **Trust** | Source authority from the registry — Reuters >> unknown blog |
+| **Engagement** | Log-scaled audience reactions, normalized per platform |
+| **Breadth** | Source diversity — penalizes single-outlet repetition |
+| **Decay** | Exponential (24h half-life) — stale stories fade naturally |
+
+Derived signals track how stories evolve: **Momentum** (rising or fading),
+**Peak Resonance** (historical max), and **Persistence** (how long a story
+stays above threshold).
+
+Resonance feeds directly into personalized story ranking — high-resonance
+stories bubble up in briefings while still respecting user interests.
+
+```bash
+prism resonance                        # top stories by media impact
+prism resonance --keyword "tariff"     # resonance for a specific topic
+prism resonance show 42                # full breakdown for a story
+```
+
+```
+GET /stories?sort=resonance            # API: stories ranked by resonance
+GET /stories/42/resonance              # API: full score breakdown
+```
+
+See [docs/resonance_specs.md](docs/resonance_specs.md) for the full formula,
+parameters, and implementation details.
+
+---
+
 ## Pipeline
 
 ```
@@ -26,28 +65,12 @@ origin. Bias is shown, not hidden.
 discover  -->  analyze  -->  personalize  -->  deliver
  (Brave)      (Claude)       (scoring)      (Resend)
   + RSS       sentiment       interests      email
-              bias labels     history        briefing
+              bias labels     resonance       briefing
+                              ranking
 ```
 
 Four agents communicate via a DB state machine (`RAW -> ANALYZED -> delivered`).
 No message queue, no Redis -- just SQLite in WAL mode.
-
-### Resonance -- Media Impact Score
-
-Each story cluster gets a **Resonance** score measuring its media footprint:
-
-```
-Resonance = breadth(sources) x SUM( trust x engagement x decay )
-```
-
-- **Trust weighting** -- source authority from the registry (Reuters >> unknown blog)
-- **Engagement** -- log-scaled audience reactions, normalized per platform
-- **Breadth** -- source diversity (penalizes single-outlet repetition)
-- **Decay** -- exponential (24h half-life), stale stories fade naturally
-
-Derived signals: **Momentum** (rising/fading), **Peak Resonance**, **Persistence**.
-Resonance feeds into P_AI ranking and is exposed via API and CLI.
-See [docs/resonance_specs.md](docs/resonance_specs.md) for the full specification.
 
 ## Quick Start
 
@@ -109,12 +132,14 @@ Prism ships a full terminal control plane. Install with `pip install -e .` and
 run `prism --help` to explore.
 
 ```
+prism resonance [--keyword] [--sort]  top stories by media impact
+prism resonance show <id>             full resonance breakdown
 prism run [--once]           start scheduler or single cycle
 prism status [--watch]       live pipeline dashboard
 prism cycle discover|analyze|brief   trigger individual agents
 prism user   add|ls|show|edit|rm     manage subscribers
 prism source ls|add|seed|trust|bias  source registry
-prism story  ls|show|stats|resonance  inspect story clusters + resonance
+prism story  ls|show|stats           inspect story clusters
 prism briefing ls|show|preview|resend  briefing management
 prism config show|check|env          configuration & health
 prism db     init|stats|export       database management
@@ -170,6 +195,7 @@ src/prism/
   cli/
     app.py       root typer app, global flags, subcommand registry
     _fmt.py      shared formatting: JSON/quiet modes, table/info helpers
+    resonance.py top-level resonance query (--keyword, show)
     run.py       scheduler start / single cycle
     status.py    live Rich dashboard
     cycle.py     manual agent triggers

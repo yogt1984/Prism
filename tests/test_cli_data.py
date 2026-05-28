@@ -51,6 +51,7 @@ def _patch_engine(engine):
         patch("prism.cli.source._get_engine", return_value=engine),
         patch("prism.cli.story._get_engine", return_value=engine),
         patch("prism.cli.briefing._get_engine", return_value=engine),
+        patch("prism.cli.resonance._get_engine", return_value=engine),
     ]
 
 
@@ -681,3 +682,97 @@ class TestStoryResonance:
         data = json.loads(result.output)
         assert data["resonance"] == 8.0
         assert data["mention_count"] == 3
+
+
+# ─── Top-level prism resonance command ───────────────────────
+
+
+class TestResonanceTopLevel:
+    def test_resonance_list_default(self, db_engine):
+        """prism resonance lists stories by resonance score."""
+        sid = _seed_source(db_engine)
+        cid = _seed_cluster(db_engine, sid, headline="FedRates")
+        _seed_resonance(db_engine, cid, resonance=12.0)
+        patches = _patch_engine(db_engine)
+        for p in patches:
+            p.start()
+        result = runner.invoke(app, ["resonance"])
+        for p in patches:
+            p.stop()
+        assert result.exit_code == 0
+        assert "FedRates" in result.output
+        assert "12.00" in result.output
+
+    def test_resonance_keyword_filter(self, db_engine):
+        """prism resonance --keyword filters by headline."""
+        sid = _seed_source(db_engine)
+        cid1 = _seed_cluster(db_engine, sid, headline="FedRates")
+        cid2 = _seed_cluster(db_engine, sid, headline="TechRally")
+        _seed_resonance(db_engine, cid1, resonance=5.0)
+        _seed_resonance(db_engine, cid2, resonance=8.0)
+        patches = _patch_engine(db_engine)
+        for p in patches:
+            p.start()
+        result = runner.invoke(app, ["--json", "resonance", "--keyword", "Tech"])
+        for p in patches:
+            p.stop()
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data) == 1
+        assert data[0]["headline"] == "TechRally"
+
+    def test_resonance_keyword_no_match(self, db_engine):
+        """prism resonance --keyword with no match shows message."""
+        sid = _seed_source(db_engine)
+        cid = _seed_cluster(db_engine, sid, headline="Fed Holds Rates")
+        _seed_resonance(db_engine, cid)
+        patches = _patch_engine(db_engine)
+        for p in patches:
+            p.start()
+        result = runner.invoke(app, ["resonance", "--keyword", "zzzznotfound"])
+        for p in patches:
+            p.stop()
+        assert result.exit_code == 0
+        assert "No stories matching" in result.output
+
+    def test_resonance_json_output(self, db_engine):
+        """prism --json resonance returns JSON array."""
+        sid = _seed_source(db_engine)
+        cid = _seed_cluster(db_engine, sid, headline="Markets Move")
+        _seed_resonance(db_engine, cid, resonance=7.5, momentum=2.0)
+        patches = _patch_engine(db_engine)
+        for p in patches:
+            p.start()
+        result = runner.invoke(app, ["--json", "resonance"])
+        for p in patches:
+            p.stop()
+        data = json.loads(result.output)
+        assert len(data) == 1
+        assert data[0]["resonance"] == 7.5
+        assert data[0]["momentum"] == 2.0
+
+    def test_resonance_show_subcommand(self, db_engine):
+        """prism resonance show <id> shows full breakdown."""
+        sid = _seed_source(db_engine)
+        cid = _seed_cluster(db_engine, sid, headline="Big Story")
+        _seed_resonance(db_engine, cid, resonance=9.5, momentum=3.0)
+        patches = _patch_engine(db_engine)
+        for p in patches:
+            p.start()
+        result = runner.invoke(app, ["resonance", "show", str(cid)])
+        for p in patches:
+            p.stop()
+        assert result.exit_code == 0
+        assert "9.500" in result.output
+        assert "3.000" in result.output
+
+    def test_resonance_empty_db(self, db_engine):
+        """prism resonance with no data shows helpful message."""
+        patches = _patch_engine(db_engine)
+        for p in patches:
+            p.start()
+        result = runner.invoke(app, ["resonance"])
+        for p in patches:
+            p.stop()
+        assert result.exit_code == 0
+        assert "No resonance data" in result.output

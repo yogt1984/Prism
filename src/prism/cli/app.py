@@ -15,6 +15,7 @@ from prism.cli._fmt import (
 )
 from prism.cli.briefing import app as briefing_app
 from prism.cli.config_cmd import app as config_app
+from prism.cli.resonance import app as resonance_app
 from prism.cli.cycle import app as cycle_app
 from prism.cli.db_cmd import app as db_app
 from prism.cli.docs import app as docs_app
@@ -32,6 +33,7 @@ app = typer.Typer(
 )
 
 app.add_typer(run_app, name="run")
+app.add_typer(resonance_app, name="resonance")
 app.add_typer(status_app, name="status")
 app.add_typer(cycle_app, name="cycle")
 app.add_typer(config_app, name="config")

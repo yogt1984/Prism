@@ -76,6 +76,15 @@ prism
 │   ├── bias <url> <label>           # Update bias label
 │   └── toggle <url>                 # Activate/deactivate
 │
+├── resonance                        # Query Resonance media-impact scores
+│   │                                # (invoke without subcommand = list top stories)
+│   ├── --keyword <text> / -k        # Filter stories by keyword in headline/summary
+│   ├── --sort <resonance|momentum>  # Sort order (default: resonance)
+│   ├── --limit <n>                  # Max results (default: 20)
+│   └── show <cluster_id>            # Full resonance breakdown for one story:
+│                                    #   resonance, momentum, peak, mentions, sources,
+│                                    #   authority_weighted_sum, breadth, window, computed_at
+│
 ├── story                            # Story cluster inspection
 │   ├── ls                           # Recent clusters (table: id, headline, status, articles, age)
 │   │   ├── --status <raw|analyzed>  # Filter by status
@@ -251,6 +260,7 @@ src/prism/cli/
 ├── cycle.py            # prism cycle discover|analyze|brief
 ├── user.py             # prism user add|ls|show|edit|rm
 ├── source.py           # prism source ls|add|seed|trust|bias|toggle
+├── resonance.py        # prism resonance [--keyword] | show <id>
 ├── story.py            # prism story ls|show|stats
 ├── briefing.py         # prism briefing ls|show|preview|resend
 ├── docs.py             # prism docs spec|roadmap|arch|stack|search
