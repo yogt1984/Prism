@@ -15,6 +15,7 @@ from prism.models import (
     Source,
     StoryCluster,
     StoryStatus,
+    TopicResonance,
 )
 
 
@@ -360,3 +361,110 @@ def test_story_detail_cluster_fields_match_list(client, db_engine):
     detail = client.get(f"/stories/{cluster.id}").json()
     for key in ("id", "headline", "summary", "categories", "status", "article_count"):
         assert detail[key] == list_row[key], f"Mismatch on {key}"
+
+
+# ── GET /stories — resonance_score field ────────────────────────────
+
+
+def test_stories_list_includes_resonance_score(client, db_engine):
+    sources = _seed_sources(db_engine, count=1)
+    _seed_story(db_engine, sources[0])
+    row = client.get("/stories").json()[0]
+    assert "resonance_score" in row
+    assert row["resonance_score"] == 0.0
+
+
+def test_stories_no_resonance_returns_zero(client, db_engine):
+    """Stories with no resonance data yet return resonance_score: 0.0."""
+    sources = _seed_sources(db_engine, count=1)
+    _seed_story(db_engine, sources[0])
+    row = client.get("/stories").json()[0]
+    assert row["resonance_score"] == 0.0
+
+
+# ── GET /stories?sort=resonance ─────────────────────────────────────
+
+
+def test_stories_sort_resonance(client, db_engine):
+    """GET /stories?sort=resonance returns stories ordered by resonance desc."""
+    sources = _seed_sources(db_engine, count=1)
+    c1 = _seed_story(db_engine, sources[0], headline="Low resonance")
+    c2 = _seed_story(db_engine, sources[0], headline="High resonance")
+    # Manually set resonance scores
+    with Session(db_engine) as s:
+        cl1 = s.get(StoryCluster, c1.id)
+        cl1.resonance_score = 1.0
+        cl2 = s.get(StoryCluster, c2.id)
+        cl2.resonance_score = 10.0
+        s.add(cl1)
+        s.add(cl2)
+        s.commit()
+
+    data = client.get("/stories", params={"sort": "resonance"}).json()
+    assert data[0]["headline"] == "High resonance"
+    assert data[1]["headline"] == "Low resonance"
+
+
+def test_stories_sort_invalid(client):
+    resp = client.get("/stories", params={"sort": "bogus"})
+    assert resp.status_code == 422
+    assert "Invalid sort" in resp.json()["detail"]
+
+
+def test_stories_sort_default_is_first_seen(client, db_engine):
+    """Default sort is first_seen desc, not resonance."""
+    sources = _seed_sources(db_engine, count=1)
+    _seed_story(db_engine, sources[0], headline="Old")
+    _seed_story(db_engine, sources[0], headline="New")
+    data = client.get("/stories").json()
+    dates = [s["first_seen"] for s in data]
+    assert dates == sorted(dates, reverse=True)
+
+
+# ── GET /stories/{id}/resonance ─────────────────────────────────────
+
+
+def test_story_resonance_found(client, db_engine):
+    sources = _seed_sources(db_engine, count=1)
+    cluster = _seed_story(db_engine, sources[0])
+    with Session(db_engine) as s:
+        tr = TopicResonance(
+            cluster_id=cluster.id,
+            resonance=12.5,
+            momentum=3.2,
+            peak_resonance=15.0,
+            mention_count=8,
+            source_count=4,
+            authority_weighted_sum=6.1,
+            breadth=2.32,
+            window_hours=72,
+        )
+        s.add(tr)
+        s.commit()
+
+    resp = client.get(f"/stories/{cluster.id}/resonance")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["resonance"] == 12.5
+    assert data["momentum"] == 3.2
+    assert data["peak_resonance"] == 15.0
+    assert data["mention_count"] == 8
+    assert data["source_count"] == 4
+    assert data["authority_weighted_sum"] == 6.1
+    assert data["breadth"] == 2.32
+    assert data["window_hours"] == 72
+    assert "computed_at" in data
+
+
+def test_story_resonance_not_found(client):
+    resp = client.get("/stories/9999/resonance")
+    assert resp.status_code == 404
+
+
+def test_story_resonance_no_data_yet(client, db_engine):
+    """Story exists but resonance not computed → 404."""
+    sources = _seed_sources(db_engine, count=1)
+    cluster = _seed_story(db_engine, sources[0])
+    resp = client.get(f"/stories/{cluster.id}/resonance")
+    assert resp.status_code == 404
+    assert "not yet computed" in resp.json()["detail"]
