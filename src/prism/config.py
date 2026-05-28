@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     # W_AI settings
     briefing_schedule_cron: str = "0 7 * * *"  # 7 AM daily
 
+    # Resonance
+    resonance_half_life_hours: int = 24
+    resonance_window_hours: int = 72
+    resonance_momentum_delta_hours: int = 6
+    resonance_platform_median: int = 50
+
     # Monitoring
     ntfy_topic: str = ""  # ntfy.sh topic for push alerts (empty = disabled)
 
