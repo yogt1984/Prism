@@ -71,6 +71,7 @@ class TestAlembicMigrations:
         expected = {
             "source", "storycluster", "article", "perspective",
             "user", "engagement", "briefing", "topicresonance",
+            "keywordtrack", "keywordmention", "perceptionsnapshot",
             "alembic_version",
         }
         assert expected == tables
@@ -115,7 +116,7 @@ class TestAlembicMigrations:
         with eng.connect() as conn:
             row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
             assert row is not None
-            assert row[0] == "005"
+            assert row[0] == "006"
         eng.dispose()
 
     def test_downgrade_base_drops_app_tables(self, tmp_path):
@@ -276,7 +277,7 @@ class TestInitDbAlembicInteraction:
         with engine.connect() as conn:
             row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
             assert row is not None
-            assert row[0] == "005"
+            assert row[0] == "006"
         engine.dispose()
 
     def test_schema_matches_between_init_db_and_alembic(self, tmp_path, _reset_engine):
@@ -343,7 +344,7 @@ class TestCliDbUpgrade:
         with engine.connect() as conn:
             row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
             assert row is not None
-            assert row[0] == "005"
+            assert row[0] == "006"
         engine.dispose()
 
     def test_cli_upgrade_specific_revision(self, tmp_path):
@@ -594,7 +595,7 @@ class TestDatetimeIndexMigration:
         eng = create_engine(url, connect_args={"check_same_thread": False})
         with eng.connect() as conn:
             row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
-            assert row[0] == "005"
+            assert row[0] == "006"
         eng.dispose()
 
     def test_explain_query_plan_uses_index(self, tmp_path):

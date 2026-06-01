@@ -10,6 +10,7 @@ from sqlalchemy import Engine
 from prism.agents.a_ai import AnalysisAgent
 from prism.agents.d_ai import DiscoveryAgent
 from prism.agents.p_ai import PersonalizationAgent
+from prism.agents.r_ai import ResonanceTracker
 from prism.agents.w_ai import WriterAgent
 from prism.alerts import AlertLevel, send_alert
 from prism.config import settings
@@ -38,6 +39,15 @@ def analysis_cycle(engine: Engine | None = None) -> None:
     except Exception as exc:
         logger.exception("Analysis cycle failed")
         send_alert(f"Analysis cycle failed: {exc}", level=AlertLevel.ERROR)
+
+
+def perception_cycle(engine: Engine | None = None) -> None:
+    try:
+        r_ai = ResonanceTracker()
+        r_ai.process_keywords(engine or get_engine())
+    except Exception as exc:
+        logger.exception("Perception cycle failed")
+        send_alert(f"Perception cycle failed: {exc}", level=AlertLevel.ERROR)
 
 
 def briefing_cycle(engine: Engine | None = None) -> None:
@@ -76,6 +86,13 @@ def build_scheduler() -> BlockingScheduler:
         "interval",
         minutes=30,
         id="analysis",
+    )
+
+    scheduler.add_job(
+        perception_cycle,
+        "interval",
+        minutes=settings.perception_scan_interval_minutes,
+        id="perception",
     )
 
     # Parse "min hour dom month dow" cron expression from config

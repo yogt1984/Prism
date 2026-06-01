@@ -43,6 +43,17 @@ def reset_all() -> None:
         _registry.clear()
 
 
+def _restore_defaults() -> None:
+    """Re-register module-level application metrics after reset_all().
+
+    Needed so that tests calling reset_all() don't orphan the global
+    metric objects for subsequent test modules.
+    """
+    for name, obj in globals().items():
+        if isinstance(obj, (Counter, Gauge, Histogram)) and obj.name not in _registry:
+            _registry[obj.name] = obj
+
+
 # ── Metric types ─────────────────────────────────────────────────────
 
 
@@ -144,6 +155,7 @@ discovery_clusters_stored = Counter("discovery_clusters_stored")
 discovery_brave_skip_total = Counter("discovery_brave_skip_total")
 analysis_duration_seconds = Histogram("analysis_duration_seconds")
 resonance_computed_total = Counter("resonance_computed_total")
+perception_computed_total = Counter("perception_computed_total")
 briefing_sent_total = Counter("briefing_sent_total")
 api_requests_total = Counter("api_requests_total")
 cycle_successes_total = Counter("cycle_successes_total")

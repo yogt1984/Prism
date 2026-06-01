@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     resonance_platform_median: int = 50
     resonance_ranking_weight: float = 0.3
 
+    # Perception tracking
+    perception_half_life_hours: int = 24
+    perception_window_hours: int = 72
+    perception_scan_interval_minutes: int = 30
+
     # Monitoring
     ntfy_topic: str = ""  # ntfy.sh topic for push alerts (empty = disabled)
 

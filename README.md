@@ -1,12 +1,45 @@
 ```
 
-  ██████╗ ██████╗ ██╗███████╗███╗   ███╗
-  ██╔══██╗██╔══██╗██║██╔════╝████╗ ████║
-  ██████╔╝██████╔╝██║███████╗██╔████╔██║
-  ██╔═══╝ ██╔══██╗██║╚════██║██║╚██╔╝██║
-  ██║     ██║  ██║██║███████║██║ ╚═╝ ██║
-  ╚═╝     ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     ╚═╝
-       ░▒▓ multi-perspective news briefings ▓▒░
+
+                                          .
+                                         /|\
+                                        / | \
+                                       /  |  \
+                                      /   |   \
+                                     /    |    \
+                                    / .---+---. \
+                                   / /  R   G  \ \
+                                  / /     |     \ \
+                                 / /  B   |   Y  \ \
+                                / /       |       \ \
+                               / /   _____|_____   \ \
+                              / /   /     |     \   \ \
+                             / /   /      |      \   \ \
+                            / /   /  _____|_____  \   \ \
+                           / /   /  /     |     \  \   \ \
+                          / /   /  /      |      \  \   \ \
+                         /./   /  /       |       \  \   \.\
+                       .+----./  /        |        \  \.----+.
+                      / |       /         |         \       | \
+                     /  |      /__________|__________\      |  \
+                    /   |     /===========|===========\     |   \
+                   /    |    /            |            \    |    \
+                  /     |   /             |             \   |     \
+                 /      |  /     P R I S M              \  |      \
+                /       | /   multi-perspective          \ |       \
+               /        |/     news briefings             \|        \
+              /=========|==================================|=========\
+             /     _____|_____          |          _____|_____        \
+            /     /     |     \         |         /     |     \       \
+           /     /      |      \        |        /      |      \      \
+          /     /  bias |shown  \       |       / every | claim  \     \
+         /     /   not  |hidden  \      |      /  links | back    \     \
+        /     /         |         \     |     /    to   | source   \     \
+       /_____/__________|__________\____|____/__________|__________\_____\
+              ░▒▓ DISCOVER ▓▒░   ░▒▓ ANALYZE ▓▒░   ░▒▓ DELIVER ▓▒░
+
+          "Humans cannot be objective -- neither can AI.
+                   We make the bias transparent."
 
 ```
 
@@ -15,7 +48,21 @@ trusted sources, analyzes them through multiple editorial perspectives, and
 delivers personalized daily briefings where every claim is attributed to its
 origin. Bias is shown, not hidden.
 
-*"Humans cannot be objective -- neither can AI. We make the bias transparent."*
+---
+
+## Pipeline
+
+```
+  D_AI          A_AI           R_AI            P_AI          W_AI
+discover  -->  analyze  -->  perception  -->  personalize  -->  deliver
+ (Brave)      (Claude)      (keywords)       (scoring)      (Resend)
+  + RSS       sentiment      salience         interests      email
+              bias labels    valence           resonance      briefing
+                             momentum          perception
+```
+
+Five agents communicate via a DB state machine (`RAW -> ANALYZED -> delivered`).
+No message queue, no Redis -- just SQLite in WAL mode.
 
 ---
 
@@ -25,21 +72,21 @@ Resonance is Prism's core metric for measuring how much media attention a topic
 commands. Every story cluster gets a continuously updated score:
 
 ```
-Resonance = breadth(sources) × Σ( trust × engagement × decay )
+Resonance = breadth(sources) x Sigma( trust x engagement x decay )
 ```
 
 | Component | What it measures |
 |-----------|-----------------|
-| **Trust** | Source authority from the registry — Reuters >> unknown blog |
+| **Trust** | Source authority from the registry -- Reuters >> unknown blog |
 | **Engagement** | Log-scaled audience reactions, normalized per platform |
-| **Breadth** | Source diversity — penalizes single-outlet repetition |
-| **Decay** | Exponential (24h half-life) — stale stories fade naturally |
+| **Breadth** | Source diversity -- penalizes single-outlet repetition |
+| **Decay** | Exponential (24h half-life) -- stale stories fade naturally |
 
 Derived signals track how stories evolve: **Momentum** (rising or fading),
 **Peak Resonance** (historical max), and **Persistence** (how long a story
 stays above threshold).
 
-Resonance feeds directly into personalized story ranking — high-resonance
+Resonance feeds directly into personalized story ranking -- high-resonance
 stories bubble up in briefings while still respecting user interests.
 
 ```bash
@@ -58,19 +105,75 @@ parameters, and implementation details.
 
 ---
 
-## Pipeline
+## Perception Pressure -- Media Perception Tracking
+
+Perception Pressure is Prism's longitudinal metric for tracking **how the media
+shapes public perception of a keyword or concept over time**. Unlike Resonance
+(which scores a single story cluster), Perception tracks a keyword *across all
+stories* and produces a signed float that evolves with every analysis cycle.
 
 ```
-  D_AI          A_AI           P_AI          W_AI
-discover  -->  analyze  -->  personalize  -->  deliver
- (Brave)      (Claude)       (scoring)      (Resend)
-  + RSS       sentiment       interests      email
-              bias labels     resonance       briefing
-                              ranking
+P(K,t) = salience(K,t) x valence(K,t)
 ```
 
-Four agents communicate via a DB state machine (`RAW -> ANALYZED -> delivered`).
-No message queue, no Redis -- just SQLite in WAL mode.
+```
+                     P(K,t) Perception Pressure
+                          ^
+                          |
+              +3.5  ......|...........*............  <-- strong positive framing
+                          |        *    *
+              +1.0  ......|......*.........*........  <-- mild positive lean
+                          |    *              *
+               0.0  ------+--*------------------*---  <-- balanced or no coverage
+                          |                      *
+              -1.5  ......|........................*  <-- negative shift begins
+                          |
+                          +------------------------> time
+                         t0   t1   t2   t3   t4
+```
+
+| Component | Definition | Range |
+|-----------|-----------|-------|
+| **Salience** A(K,t) | Total media attention: `Sigma[ breadth x decay ]` across matching clusters | 0 to +inf |
+| **Valence** V(K,t) | Trust-weighted average sentiment across all perspectives | -1.0 to +1.0 |
+| **Perception** P(K,t) | `A x V` -- net media pressure, the single signed float | -inf to +inf |
+| **Momentum** dP/dt | Rate of change vs previous snapshot | unbounded |
+
+**Reading the signal:**
+
+| Value | Interpretation |
+|-------|---------------|
+| `P > 0` | Net positive media framing |
+| `P < 0` | Net negative media framing |
+| `\|P\| large` | Strong, broad, authoritative, fresh coverage |
+| `\|P\| ~ 0` | Either nobody's covering it, or coverage is perfectly balanced |
+| `dP/dt > 0` | Perception shifting positive (narrative building) |
+| `dP/dt < 0` | Perception shifting negative (backlash forming) |
+
+**Track keywords and monitor perception:**
+
+```bash
+prism perception keyword add "tariff" --aliases "tariffs,trade barriers"
+prism perception keyword add "AI regulation" --category tech
+prism perception keyword ls               # list tracked keywords
+prism perception                           # latest scores for all keywords
+prism perception show 1 --history 20       # detail + history for keyword
+prism perception scan                      # manual trigger
+```
+
+```
+GET  /keywords                             # list tracked keywords
+POST /keywords                             # add a keyword to track
+GET  /keywords/1/perception                # latest perception snapshot
+GET  /keywords/1/perception/history        # time series
+DELETE /keywords/1                         # deactivate keyword
+```
+
+The R_AI agent (Resonance Tracker) runs on the same 30-minute schedule as
+analysis, scanning all analyzed clusters for tracked keywords and computing
+fresh perception snapshots.
+
+---
 
 ## Quick Start
 
@@ -111,6 +214,11 @@ Prism exposes a FastAPI-based REST API for programmatic access. Run with
 | GET | `/stories` | List stories (`?status=`, `?sort=resonance`, `?limit=`, `?offset=`) |
 | GET | `/stories/{id}` | Story detail with articles + perspectives |
 | GET | `/stories/{id}/resonance` | Full resonance score breakdown |
+| GET | `/keywords` | List tracked keywords (`?active=` filter) |
+| POST | `/keywords` | Add a keyword to track |
+| GET | `/keywords/{id}/perception` | Latest perception snapshot |
+| GET | `/keywords/{id}/perception/history` | Perception time series |
+| DELETE | `/keywords/{id}` | Deactivate a tracked keyword |
 | POST | `/users` | Register a new user |
 
 **Authenticated endpoints** (require `X-API-Key` header, Pro tier):
@@ -134,6 +242,10 @@ run `prism --help` to explore.
 ```
 prism resonance [--keyword] [--sort]  top stories by media impact
 prism resonance show <id>             full resonance breakdown
+prism perception                      latest perception for all keywords
+prism perception show <id>            perception detail + history
+prism perception keyword add|ls|rm    manage tracked keywords
+prism perception scan                 manual perception cycle
 prism run [--once]           start scheduler or single cycle
 prism status [--watch]       live pipeline dashboard
 prism cycle discover|analyze|brief   trigger individual agents
@@ -163,11 +275,14 @@ progress messages), `--db <url>` (override database).
 | `RESONANCE_HALF_LIFE_HOURS` | No | `24` |
 | `RESONANCE_WINDOW_HOURS` | No | `72` |
 | `RESONANCE_RANKING_WEIGHT` | No | `0.3` |
+| `PERCEPTION_HALF_LIFE_HOURS` | No | `24` |
+| `PERCEPTION_WINDOW_HOURS` | No | `72` |
+| `PERCEPTION_SCAN_INTERVAL_MINUTES` | No | `30` |
 
 ## Testing
 
 ```bash
-pytest                       # 850+ tests
+pytest                       # 880+ tests
 ruff check src/ tests/       # lint
 ```
 
@@ -178,15 +293,18 @@ src/prism/
   main.py        scheduler orchestration (APScheduler)
   config.py      settings via pydantic-settings
   db.py          SQLite + WAL mode
-  models.py      Source, StoryCluster, Article, Perspective, User, Briefing, TopicResonance
+  models.py      Source, StoryCluster, Article, Perspective, User, Briefing,
+                 TopicResonance, KeywordTrack, KeywordMention, PerceptionSnapshot
   retry.py       exponential backoff for transient API failures
   alerts.py      ntfy.sh notification forwarding
   resonance.py   topic media impact score computation
+  perception.py  perception pressure computation (salience x valence)
   onboarding.py  user registration with email/interest validation
   seed.py        30 curated sources across the bias spectrum
   agents/
     d_ai.py      discovery: Brave API + RSS + Jaccard dedup
     a_ai.py      analysis: Claude structured output + token budget + resonance
+    r_ai.py      perception: keyword scanning + perception pressure computation
     p_ai.py      personalization: scoring + story selection + resonance ranking
     w_ai.py      writer: briefing generation + email delivery
   api/
@@ -196,6 +314,7 @@ src/prism/
     app.py       root typer app, global flags, subcommand registry
     _fmt.py      shared formatting: JSON/quiet modes, table/info helpers
     resonance.py top-level resonance query (--keyword, show)
+    perception.py keyword tracking + perception query + manual scan
     run.py       scheduler start / single cycle
     status.py    live Rich dashboard
     cycle.py     manual agent triggers
@@ -234,6 +353,9 @@ docs/
 - **Resonance**: Topic media impact score -- composite metric (trust x
   engagement x breadth x decay), A_AI integration, API/CLI exposure,
   P_AI ranking boost, 39 new tests
+- **Perception Pressure**: Longitudinal keyword tracking -- R_AI agent,
+  signed perception float (salience x valence), keyword management,
+  time-series snapshots, momentum tracking, CLI + API exposure, 24 new tests
 
 ## Tech Stack
 

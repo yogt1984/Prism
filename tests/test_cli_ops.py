@@ -133,7 +133,7 @@ class TestCycleBrief:
         ):
             result = runner.invoke(app, ["cycle", "brief"])
         assert result.exit_code == 0
-        assert "2 user(s)" in result.output
+        assert "0/2 sent" in result.output
 
     def test_brief_single_user(self, db_engine):
         from sqlmodel import Session
@@ -155,7 +155,7 @@ class TestCycleBrief:
             result = runner.invoke(app, ["cycle", "brief",
                                          "--user", "solo@test.com"])
         assert result.exit_code == 0
-        assert "1 user(s)" in result.output
+        assert "0/1 sent" in result.output
 
     def test_brief_user_not_found(self, db_engine):
         with patch("prism.cli.cycle._get_engine", return_value=db_engine):

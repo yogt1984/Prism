@@ -22,3 +22,11 @@ def _reset_circuit_breakers():
     yield
     brave_breaker.reset()
     claude_breaker.reset()
+
+
+@pytest.fixture(autouse=True)
+def _restore_metrics_registry():
+    """Re-register module-level metrics after tests that call reset_all()."""
+    yield
+    from prism.metrics import _restore_defaults
+    _restore_defaults()

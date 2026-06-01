@@ -143,6 +143,44 @@ class TopicResonance(SQLModel, table=True):
     computed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+# --- Perception Tracking ---
+
+
+class KeywordTrack(SQLModel, table=True):
+    """A keyword or concept to monitor for media perception."""
+    id: int | None = Field(default=None, primary_key=True)
+    keyword: str = Field(index=True, unique=True)
+    aliases: str = ""  # comma-separated synonyms
+    category: str = ""  # grouping label
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class KeywordMention(SQLModel, table=True):
+    """A tracked keyword detected in an analyzed story cluster."""
+    id: int | None = Field(default=None, primary_key=True)
+    keyword_id: int = Field(foreign_key="keywordtrack.id", index=True)
+    cluster_id: int = Field(foreign_key="storycluster.id", index=True)
+    mention_count: int = 0  # total matches across articles
+    headline_hit: bool = False  # keyword appears in cluster headline
+    source_count: int = 0  # distinct sources mentioning keyword
+    weighted_score: float = 0.0  # trust-weighted mention strength
+    seen_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PerceptionSnapshot(SQLModel, table=True):
+    """Point-in-time perception measurement for a tracked keyword."""
+    id: int | None = Field(default=None, primary_key=True)
+    keyword_id: int = Field(foreign_key="keywordtrack.id", index=True)
+    perception: float = 0.0  # P(K,t) — signed net media pressure
+    salience: float = 0.0  # A(K,t) — unsigned attention volume
+    valence: float = 0.0  # V(K,t) — direction ∈ [-1, +1]
+    momentum: float = 0.0  # dP/dt approximation
+    cluster_count: int = 0  # clusters contributing to this snapshot
+    source_count: int = 0  # unique sources across all matches
+    computed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 # --- Briefings ---
 
 class Briefing(SQLModel, table=True):

@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from prism import metrics
-from prism.metrics import Counter, Gauge, Histogram, get_metric, reset_all, snapshot
+from prism.metrics import Counter, Gauge, Histogram, _restore_defaults, get_metric, reset_all, snapshot
 
 
 @pytest.fixture(autouse=True)
@@ -13,6 +13,7 @@ def _clean_registry():
     reset_all()
     yield
     reset_all()
+    _restore_defaults()
 
 
 # ══════════════════════════════════════════════════════════════════════

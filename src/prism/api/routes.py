@@ -18,6 +18,9 @@ from prism.models import (
     BriefingFormat,
     Category,
     Engagement,
+    KeywordMention,
+    KeywordTrack,
+    PerceptionSnapshot,
     Perspective,
     Source,
     StoryCluster,
@@ -252,6 +255,36 @@ class EngagementOut(BaseModel):
     action: str
     read_time_sec: int
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class KeywordCreate(BaseModel):
+    keyword: str
+    aliases: str = ""
+    category: str = ""
+
+
+class KeywordOut(BaseModel):
+    id: int
+    keyword: str
+    aliases: str
+    category: str
+    is_active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PerceptionOut(BaseModel):
+    keyword_id: int
+    perception: float
+    salience: float
+    valence: float
+    momentum: float
+    cluster_count: int
+    source_count: int
+    computed_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -656,3 +689,94 @@ def create_engagement(
     session.commit()
     session.refresh(engagement)
     return EngagementOut.model_validate(engagement)
+
+
+# ── Keywords & Perception ────────────────────────────────────────────
+
+
+@router.get("/keywords", response_model=list[KeywordOut])
+def list_keywords(
+    active: Annotated[bool | None, Query(description="Filter by active status")] = None,
+    session: Session = Depends(_get_session),
+) -> list[KeywordOut]:
+    """List tracked keywords."""
+    stmt = select(KeywordTrack)
+    if active is not None:
+        stmt = stmt.where(KeywordTrack.is_active == active)
+    stmt = stmt.order_by(col(KeywordTrack.keyword))
+    rows = session.exec(stmt).all()
+    return [KeywordOut.model_validate(r) for r in rows]
+
+
+@router.post("/keywords", response_model=KeywordOut, status_code=201)
+def create_keyword(
+    body: KeywordCreate,
+    session: Session = Depends(_get_session),
+) -> KeywordOut:
+    """Add a keyword to track."""
+    existing = session.exec(
+        select(KeywordTrack).where(KeywordTrack.keyword == body.keyword)
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Keyword '{body.keyword}' already tracked")
+
+    kw = KeywordTrack(keyword=body.keyword, aliases=body.aliases, category=body.category)
+    session.add(kw)
+    session.commit()
+    session.refresh(kw)
+    return KeywordOut.model_validate(kw)
+
+
+@router.delete("/keywords/{keyword_id}", status_code=204)
+def deactivate_keyword(
+    keyword_id: int,
+    session: Session = Depends(_get_session),
+) -> None:
+    """Deactivate a tracked keyword (preserves history)."""
+    kw = session.get(KeywordTrack, keyword_id)
+    if kw is None:
+        raise HTTPException(status_code=404, detail="Keyword not found")
+    kw.is_active = False
+    session.add(kw)
+    session.commit()
+
+
+@router.get("/keywords/{keyword_id}/perception", response_model=PerceptionOut)
+def get_keyword_perception(
+    keyword_id: int,
+    session: Session = Depends(_get_session),
+) -> PerceptionOut:
+    """Get the latest perception snapshot for a keyword."""
+    kw = session.get(KeywordTrack, keyword_id)
+    if kw is None:
+        raise HTTPException(status_code=404, detail="Keyword not found")
+
+    snap = session.exec(
+        select(PerceptionSnapshot)
+        .where(PerceptionSnapshot.keyword_id == keyword_id)
+        .order_by(PerceptionSnapshot.computed_at.desc())  # type: ignore[union-attr]
+    ).first()
+    if snap is None:
+        raise HTTPException(status_code=404, detail="No perception data yet for this keyword")
+
+    return PerceptionOut.model_validate(snap)
+
+
+@router.get("/keywords/{keyword_id}/perception/history", response_model=list[PerceptionOut])
+def get_keyword_perception_history(
+    keyword_id: int,
+    limit: Annotated[int, Query(ge=1, le=500, description="Max snapshots")] = 50,
+    session: Session = Depends(_get_session),
+) -> list[PerceptionOut]:
+    """Get perception history for a keyword (newest first)."""
+    kw = session.get(KeywordTrack, keyword_id)
+    if kw is None:
+        raise HTTPException(status_code=404, detail="Keyword not found")
+
+    rows = session.exec(
+        select(PerceptionSnapshot)
+        .where(PerceptionSnapshot.keyword_id == keyword_id)
+        .order_by(PerceptionSnapshot.computed_at.desc())  # type: ignore[union-attr]
+        .limit(limit)
+    ).all()
+    return [PerceptionOut.model_validate(r) for r in rows]

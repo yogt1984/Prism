@@ -18,12 +18,13 @@ from prism.main import briefing_cycle, build_scheduler
 def test_scheduler_registers_all_jobs():
     scheduler = build_scheduler()
     job_ids = {j.id for j in scheduler.get_jobs()}
-    assert job_ids == {"discovery", "analysis", "briefing"}
+    assert job_ids == {"discovery", "analysis", "briefing", "perception"}
 
 
 def test_scheduler_discovery_interval():
     with patch("prism.main.settings") as mock_settings:
         mock_settings.discovery_interval_hours = 2
+        mock_settings.perception_scan_interval_minutes = 30
         scheduler = build_scheduler()
 
     job = scheduler.get_job("discovery")
@@ -49,6 +50,7 @@ def test_scheduler_briefing_cron_reads_config():
     """Briefing cron fields come from settings.briefing_schedule_cron."""
     with patch("prism.main.settings") as mock_settings:
         mock_settings.discovery_interval_hours = 1
+        mock_settings.perception_scan_interval_minutes = 30
         mock_settings.briefing_schedule_cron = "30 9 * * 1-5"
         scheduler = build_scheduler()
 
