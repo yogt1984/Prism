@@ -10,5 +10,22 @@ services:
       - prism-data:/app/data
     command: uvicorn prism.api.app:create_app --factory --host 0.0.0.0 --port 8000 --reload
 
+  frontend:
+    build: ./frontend
+    image: prism-frontend:dev
+    env_file: ./frontend/.env
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/app:/app/app
+      - ./frontend/components:/app/components
+      - ./frontend/lib:/app/lib
+      - ./frontend/public:/app/public
+    environment:
+      - NEXT_PUBLIC_API_URL=http://prism:8000
+    depends_on:
+      - prism
+    command: npm run dev
+
 volumes:
   prism-data:
