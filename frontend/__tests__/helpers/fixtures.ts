@@ -225,6 +225,91 @@ export function makeSources(count: number = 3): Source[] {
   );
 }
 
+export function makeSourceList(): Source[] {
+  return [
+    makeSource({
+      id: 1,
+      name: "Reuters",
+      url: "https://www.reuters.com",
+      trust_score: 0.92,
+      bias_label: "center",
+      categories: "finance,world,politics",
+    }),
+    makeSource({
+      id: 2,
+      name: "AP News",
+      url: "https://apnews.com",
+      trust_score: 0.88,
+      bias_label: "center",
+      categories: "world,politics",
+    }),
+    makeSource({
+      id: 3,
+      name: "BBC",
+      url: "https://www.bbc.com",
+      trust_score: 0.85,
+      bias_label: "center_left",
+      categories: "world,culture,technology",
+    }),
+    makeSource({
+      id: 4,
+      name: "CNN",
+      url: "https://www.cnn.com",
+      trust_score: 0.72,
+      bias_label: "center_left",
+      categories: "politics,world",
+    }),
+    makeSource({
+      id: 5,
+      name: "Fox News",
+      url: "https://www.foxnews.com",
+      trust_score: 0.55,
+      bias_label: "right",
+      categories: "politics,finance",
+    }),
+    makeSource({
+      id: 6,
+      name: "The Guardian",
+      url: "https://www.theguardian.com",
+      trust_score: 0.80,
+      bias_label: "left",
+      categories: "politics,world,culture",
+    }),
+    makeSource({
+      id: 7,
+      name: "Wall Street Journal",
+      url: "https://www.wsj.com",
+      trust_score: 0.87,
+      bias_label: "center_right",
+      categories: "finance,politics,technology",
+    }),
+    makeSource({
+      id: 8,
+      name: "NPR",
+      url: "https://www.npr.org",
+      trust_score: 0.82,
+      bias_label: "center_left",
+      categories: "politics,culture,science",
+    }),
+    makeSource({
+      id: 9,
+      name: "Breitbart",
+      url: "https://www.breitbart.com",
+      trust_score: 0.25,
+      bias_label: "right",
+      categories: "politics",
+    }),
+    makeSource({
+      id: 10,
+      name: "Jacobin",
+      url: "https://www.jacobin.com",
+      trust_score: 0.45,
+      bias_label: "left",
+      categories: "politics,culture",
+    }),
+  ];
+}
+
 export function makeUser(overrides: Partial<User> = {}): User {
   return {
     id: 5,
