@@ -6,6 +6,7 @@ import type {
   Source,
   Story,
   StoryDetail,
+  User,
   Briefing,
   BriefingDetail,
   Keyword,
@@ -222,6 +223,20 @@ export function makeSources(count: number = 3): Source[] {
       bias_label: biases[i % biases.length],
     }),
   );
+}
+
+export function makeUser(overrides: Partial<User> = {}): User {
+  return {
+    id: 5,
+    email: "user@test.com",
+    name: "Jane",
+    interests: "finance,technology",
+    preferred_format: "email",
+    briefing_depth: 10,
+    is_pro: false,
+    created_at: "2026-05-15T10:00:00Z",
+    ...overrides,
+  };
 }
 
 export function makeTopStories(count: number = 5): Story[] {

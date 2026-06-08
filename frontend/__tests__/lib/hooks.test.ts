@@ -12,6 +12,8 @@ import {
   useTriggerBriefing,
   useBriefingList,
   useBriefingDetailById,
+  useUserProfile,
+  useUpdateUser,
   useStoryDetail,
   useStoryResonance,
   useSources,
@@ -30,6 +32,7 @@ import {
   makeResonance,
   makeSource,
   makeEngagement,
+  makeUser,
 } from "../helpers/fixtures";
 
 const mockFetch = vi.fn();
@@ -472,6 +475,63 @@ describe("hooks", () => {
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       // Verify it only fetched once (staleTime keeps it fresh)
       expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("useUserProfile", () => {
+    it("fetches user profile by id", async () => {
+      const user = makeUser({ id: 5 });
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(user));
+
+      const { result } = renderHook(() => useUserProfile(5), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.data).toEqual(user);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/bff/users/5",
+        expect.any(Object),
+      );
+    });
+
+    it("does not fetch when userId is undefined", () => {
+      renderHook(() => useUserProfile(undefined), {
+        wrapper: createWrapper(),
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("useUpdateUser", () => {
+    it("sends PATCH with user update payload", async () => {
+      const updated = makeUser({ name: "Jane Doe" });
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(updated));
+
+      const { result } = renderHook(() => useUpdateUser(5), {
+        wrapper: createWrapper(),
+      });
+
+      result.current.mutate({ name: "Jane Doe" });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/bff/users/5",
+        expect.objectContaining({ method: "PATCH" }),
+      );
+    });
+
+    it("sends interests update", async () => {
+      const updated = makeUser({ interests: "finance,sports" });
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(updated));
+
+      const { result } = renderHook(() => useUpdateUser(5), {
+        wrapper: createWrapper(),
+      });
+
+      result.current.mutate({ interests: "finance,sports" });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
     });
   });
 

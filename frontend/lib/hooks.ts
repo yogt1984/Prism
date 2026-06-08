@@ -13,6 +13,7 @@ import type {
   Source,
   Story,
   StoryDetail,
+  User,
   Keyword,
   PerceptionSnapshot,
 } from "./types";
@@ -171,6 +172,30 @@ export function useBriefingDetailById(
       ),
     enabled: !!userId && !!briefingId,
     staleTime: 30 * 60_000,
+  });
+}
+
+export function useUserProfile(userId: number | undefined) {
+  return useQuery({
+    queryKey: ["users", userId],
+    queryFn: () => apiFetch<User>(`/users/${userId}`),
+    enabled: !!userId,
+    staleTime: 10 * 60_000,
+  });
+}
+
+export function useUpdateUser(userId: number | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["users", userId, "update"],
+    mutationFn: (payload: Partial<User>) =>
+      apiFetch<User>(`/users/${userId}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["users", userId], data);
+    },
   });
 }
 
