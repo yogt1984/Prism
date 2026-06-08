@@ -111,7 +111,21 @@ class User(SQLModel, table=True):
     is_pro: bool = False
     api_key: str = ""  # deprecated — kept for backward compat, cleared after hashing
     api_key_hash: str = ""  # SHA-256 hash of the API key
+    # Stripe subscription
+    stripe_customer_id: str = ""  # Stripe Customer ID (cus_xxx)
+    stripe_subscription_id: str = ""  # Stripe Subscription ID (sub_xxx)
+    pro_since: datetime | None = None  # when Pro was first activated
+    pro_until: datetime | None = None  # grace period end after cancellation
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class StripeEvent(SQLModel, table=True):
+    """Tracks processed Stripe webhook events for idempotent handling."""
+    id: int | None = Field(default=None, primary_key=True)
+    event_id: str = Field(unique=True, index=True)  # Stripe event ID (evt_xxx)
+    event_type: str = ""  # e.g. "checkout.session.completed"
+    user_id: int | None = Field(default=None, foreign_key="user.id")
+    processed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class Engagement(SQLModel, table=True):

@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, model_validator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security
 from fastapi.security import APIKeyHeader
@@ -217,8 +217,19 @@ class UserOut(BaseModel):
     briefing_depth: int
     is_pro: bool
     created_at: datetime
+    pro_since: datetime | None = None
+    pro_until: datetime | None = None
+    has_stripe_subscription: bool = False
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_has_stripe(cls, data):  # type: ignore[no-untyped-def]
+        if hasattr(data, "stripe_subscription_id"):
+            data = dict(data) if not isinstance(data, dict) else data
+            data["has_stripe_subscription"] = bool(data.get("stripe_subscription_id", ""))
+        return data
 
 
 class BriefingOut(BaseModel):

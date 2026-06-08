@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     # Monitoring
     ntfy_topic: str = ""  # ntfy.sh topic for push alerts (empty = disabled)
 
+    # Stripe (required for payment, optional for dev without payments)
+    stripe_secret_key: str = ""  # sk_test_... or sk_live_...
+    stripe_publishable_key: str = ""  # pk_test_... or pk_live_...
+    stripe_webhook_secret: str = ""  # whsec_...
+    stripe_price_id: str = ""  # price_... ($7/mo recurring)
+    grace_period_days: int = 7  # days before downgrade after payment failure
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
