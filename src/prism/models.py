@@ -207,3 +207,7 @@ class Briefing(SQLModel, table=True):
     sent: bool = False
     sent_at: datetime | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    # TTS audio
+    audio_path: str = ""  # relative path: "audio/42.mp3", empty if no audio
+    audio_duration_sec: int = 0  # playback duration in seconds
+    audio_size_bytes: int = 0  # file size for download estimate

@@ -45,6 +45,8 @@ def init_db(url: str | None = None) -> Engine:
     If the database already has an alembic_version table, skip
     create_all to avoid conflicting with managed migrations.
     """
+    import os
+
     import prism.models  # noqa: F401 — ensure all tables are registered
 
     engine = get_engine(url)
@@ -52,6 +54,14 @@ def init_db(url: str | None = None) -> Engine:
         logger.info("Database is managed by Alembic — skipping create_all")
     else:
         SQLModel.metadata.create_all(engine)
+
+    # Ensure audio storage directory exists
+    try:
+        from prism.config import settings
+        os.makedirs(settings.audio_storage_dir, exist_ok=True)
+    except Exception:
+        pass  # non-fatal — tests may not have config
+
     return engine
 
 

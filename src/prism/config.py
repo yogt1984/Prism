@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     perception_window_hours: int = 72
     perception_scan_interval_minutes: int = 30
 
+    # TTS (required for audio briefings, optional otherwise)
+    openai_api_key: str = ""  # OpenAI API key for TTS
+    tts_voice: str = "alloy"  # alloy, echo, fable, onyx, nova, shimmer
+    tts_model: str = "tts-1-hd"  # tts-1 (fast) or tts-1-hd (high quality)
+    tts_max_chars: int = 50000  # reject scripts longer than this
+    tts_chunk_size: int = 4000  # chars per API call (OpenAI limit: 4096)
+    audio_storage_dir: str = "data/audio"  # directory for MP3 files
+
     # Monitoring
     ntfy_topic: str = ""  # ntfy.sh topic for push alerts (empty = disabled)
 

@@ -20,6 +20,8 @@ dependencies = [
     "rich>=13.0.0",
     "alembic>=1.14.0",
     "stripe>=10.0",
+    "openai>=1.0",
+    "pydub>=0.25",
 ]
 
 [project.scripts]
