@@ -38,6 +38,14 @@ class StoryStatus(StrEnum):
     ANALYZED = "analyzed"
 
 
+class SourceStatus(StrEnum):
+    SEED = "seed"             # hand-curated, never auto-demoted
+    CANDIDATE = "candidate"   # discovered, not yet evaluated
+    PROBATION = "probation"   # active but under validation
+    TRUSTED = "trusted"       # passed validation, fully active
+    REJECTED = "rejected"     # failed validation, inactive
+
+
 # --- Source Registry ---
 
 class Source(SQLModel, table=True):
@@ -50,6 +58,15 @@ class Source(SQLModel, table=True):
     categories: str = ""  # comma-separated Category values
     active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    # Lifecycle
+    status: SourceStatus = SourceStatus.CANDIDATE
+    discovered_via: str = ""          # "brave_search", "rss_reference", "manual"
+    probation_start: datetime | None = None
+    articles_validated: int = 0       # cross-referenced with trusted sources
+    articles_failed: int = 0          # failed cross-validation
+    sighting_count: int = 0           # times seen in Brave results
+    last_evaluated: datetime | None = None
+    rejection_reason: str = ""
 
 
 # --- Stories ---

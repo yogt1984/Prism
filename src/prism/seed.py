@@ -8,7 +8,7 @@ import logging
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
-from prism.models import BiasLabel, Source
+from prism.models import BiasLabel, Source, SourceStatus
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,8 @@ def seed_sources(engine: Engine) -> int:
                 bias_label=bias,
                 categories=categories,
                 active=True,
+                status=SourceStatus.SEED,
+                discovered_via="manual",
             )
             session.add(source)
             inserted += 1
