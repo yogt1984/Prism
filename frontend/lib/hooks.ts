@@ -8,7 +8,11 @@ import { apiFetch } from "./api";
 import type {
   Briefing,
   BriefingDetail,
+  Engagement,
+  Resonance,
+  Source,
   Story,
+  StoryDetail,
   Keyword,
   PerceptionSnapshot,
 } from "./types";
@@ -90,6 +94,53 @@ export function usePerceptionHistory(keywordId: number) {
         `/keywords/${keywordId}/perception/history?limit=20`,
       ),
     staleTime: 2 * 60_000,
+  });
+}
+
+export function useStoryDetail(storyId: number | undefined) {
+  return useQuery({
+    queryKey: ["stories", storyId, "detail"],
+    queryFn: () => apiFetch<StoryDetail>(`/stories/${storyId}`),
+    enabled: !!storyId,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useStoryResonance(storyId: number | undefined) {
+  return useQuery({
+    queryKey: ["stories", storyId, "resonance"],
+    queryFn: () => apiFetch<Resonance>(`/stories/${storyId}/resonance`),
+    enabled: !!storyId,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useSources() {
+  return useQuery({
+    queryKey: ["sources"],
+    queryFn: () => apiFetch<Source[]>("/sources?active=true"),
+    staleTime: 30 * 60_000,
+  });
+}
+
+export function useSourceMap() {
+  const { data: sources = [] } = useSources();
+  return new Map(sources.map((s) => [s.id, s]));
+}
+
+export function useRecordEngagement() {
+  return useMutation({
+    mutationKey: ["engagements"],
+    mutationFn: (payload: {
+      user_id: number;
+      cluster_id: number;
+      action: "open" | "read" | "save" | "skip";
+      read_time_sec: number;
+    }) =>
+      apiFetch<Engagement>("/engagements", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
   });
 }
 

@@ -1,5 +1,11 @@
 import type {
+  Article,
+  Engagement,
+  Perspective,
+  Resonance,
+  Source,
   Story,
+  StoryDetail,
   Briefing,
   BriefingDetail,
   Keyword,
@@ -93,6 +99,129 @@ export function makePerceptionHistory(
       Date.now() - (count - i) * 3_600_000,
     ).toISOString(),
   }));
+}
+
+export function makeSource(overrides: Partial<Source> = {}): Source {
+  return {
+    id: 1,
+    name: "Reuters",
+    url: "https://reuters.com",
+    rss_url: "https://reuters.com/rss",
+    trust_score: 0.95,
+    bias_label: "center",
+    categories: "finance,politics,world",
+    active: true,
+    created_at: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+export function makeArticle(overrides: Partial<Article> = {}): Article {
+  return {
+    id: 1,
+    source_id: 1,
+    title: "Fed Holds Rates Steady",
+    url: "https://reuters.com/article/fed-rates",
+    snippet: "The Federal Reserve decided to maintain current interest rates.",
+    published_at: new Date(Date.now() - 3_600_000).toISOString(),
+    fetched_at: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+export function makePerspective(
+  overrides: Partial<Perspective> = {},
+): Perspective {
+  return {
+    id: 1,
+    source_id: 1,
+    summary: "Reuters reports the Fed held rates steady in a widely expected move.",
+    sentiment: 0.1,
+    bias_label: "center",
+    key_claims: JSON.stringify([
+      "Fed maintains current rate range",
+      "Decision was unanimous",
+    ]),
+    ...overrides,
+  };
+}
+
+export function makeResonance(
+  overrides: Partial<Resonance> = {},
+): Resonance {
+  return {
+    cluster_id: 1,
+    resonance: 4.72,
+    momentum: 0.15,
+    peak_resonance: 5.1,
+    mention_count: 42,
+    source_count: 8,
+    authority_weighted_sum: 12.5,
+    breadth: 0.78,
+    window_hours: 24,
+    computed_at: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+export function makeStoryDetail(
+  overrides: Partial<StoryDetail> = {},
+): StoryDetail {
+  return {
+    ...makeStory(),
+    articles: [
+      makeArticle({ id: 1, source_id: 1, title: "Reuters: Fed Holds Rates" }),
+      makeArticle({
+        id: 2,
+        source_id: 2,
+        title: "AP: Federal Reserve Keeps Rates Unchanged",
+        url: "https://apnews.com/fed-rates",
+      }),
+    ],
+    perspectives: [
+      makePerspective({ id: 1, source_id: 1, bias_label: "center" }),
+      makePerspective({
+        id: 2,
+        source_id: 2,
+        summary: "AP reports the Fed decision reflects cautious optimism.",
+        sentiment: 0.3,
+        bias_label: "center_left",
+      }),
+    ],
+    ...overrides,
+  };
+}
+
+export function makeEngagement(
+  overrides: Partial<Engagement> = {},
+): Engagement {
+  return {
+    id: 1,
+    user_id: 5,
+    cluster_id: 1,
+    action: "open",
+    read_time_sec: 0,
+    created_at: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+export function makeSources(count: number = 3): Source[] {
+  const names = ["Reuters", "AP News", "BBC", "CNN", "Fox News"];
+  const biases: Source["bias_label"][] = [
+    "center",
+    "center_left",
+    "center",
+    "center_left",
+    "right",
+  ];
+  return Array.from({ length: count }, (_, i) =>
+    makeSource({
+      id: i + 1,
+      name: names[i % names.length],
+      bias_label: biases[i % biases.length],
+    }),
+  );
 }
 
 export function makeTopStories(count: number = 5): Story[] {
