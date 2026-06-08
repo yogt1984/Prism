@@ -21,7 +21,8 @@ from prism.circuit_breaker import CircuitOpenError, brave_breaker
 from prism.config import settings
 from prism.db import get_engine, get_session
 from prism.metrics import discovery_brave_skip_total, timed_cycle
-from prism.models import Article, Source, StoryCluster, StoryStatus
+from prism.agents.blocklist import is_blocked
+from prism.models import Article, Source, SourceStatus, StoryCluster, StoryStatus
 from prism.retry import retry_on_transient
 
 logger = logging.getLogger(__name__)
@@ -386,6 +387,10 @@ class DiscoveryAgent:
             if cluster:
                 stored += 1
 
+        # Extract candidate sources from Brave results
+        brave_articles = [a for a in all_articles if a not in rss_articles]
+        self._extract_candidates(brave_articles, engine)
+
         if not all_articles:
             send_alert(
                 "Discovery cycle returned zero articles from all sources",
@@ -401,6 +406,108 @@ class DiscoveryAgent:
             "Discovery cycle complete. Stored %d clusters from %d articles.",
             stored, len(all_articles),
         )
+
+    def _extract_candidates(
+        self,
+        brave_results: list[dict],
+        engine: Engine | None = None,
+    ) -> int:
+        """Extract unknown domains from Brave results and create candidates.
+
+        Returns count of new candidates created.
+        """
+        e = engine or get_engine()
+        created = 0
+        max_per_cycle = settings.source_candidate_max_per_cycle
+
+        # Collect unique domains from results
+        seen_domains: set[str] = set()
+        for result in brave_results:
+            url = result.get("url", "")
+            if not url:
+                continue
+            domain = urlparse(url).netloc.removeprefix("www.").lower()
+            if not domain or domain in seen_domains:
+                continue
+            seen_domains.add(domain)
+
+        with Session(e) as session:
+            # Load existing source domains for dedup
+            existing_urls = {
+                row for row in session.exec(select(Source.url)).all()
+            }
+
+            for domain in seen_domains:
+                if created >= max_per_cycle:
+                    break
+
+                # Skip if already registered
+                if domain in existing_urls:
+                    # Increment sighting_count for existing candidates
+                    existing = session.exec(
+                        select(Source).where(Source.url == domain)
+                    ).first()
+                    if existing and existing.status == SourceStatus.CANDIDATE:
+                        existing.sighting_count += 1
+                    continue
+
+                # Skip blocked domains
+                if is_blocked(domain):
+                    continue
+
+                # Infer category from the search query context
+                categories = self._infer_categories(domain, brave_results)
+
+                source = Source(
+                    name=domain,  # placeholder name, refined later
+                    url=domain,
+                    status=SourceStatus.CANDIDATE,
+                    trust_score=0.0,
+                    active=False,
+                    discovered_via="brave_search",
+                    sighting_count=1,
+                    categories=categories,
+                )
+                session.add(source)
+                existing_urls.add(domain)
+                created += 1
+
+            session.commit()
+
+        if created > 0:
+            logger.info("Created %d candidate sources", created)
+        return created
+
+    def _infer_categories(
+        self, domain: str, results: list[dict],
+    ) -> str:
+        """Infer categories from the search queries that surfaced this domain.
+
+        If domain appeared in results for "finance news" query, tag "finance".
+        """
+        categories: set[str] = set()
+        category_keywords = {
+            "finance": "finance",
+            "technology": "technology",
+            "politics": "politics",
+            "sports": "sports",
+            "science": "science",
+            "health": "health",
+            "culture": "culture",
+            "world": "world",
+        }
+        for result in results:
+            result_domain = urlparse(result.get("url", "")).netloc
+            result_domain = result_domain.removeprefix("www.").lower()
+            if result_domain != domain:
+                continue
+            title = result.get("title", "").lower()
+            desc = result.get("description", "").lower()
+            text = f"{title} {desc}"
+            for keyword, cat in category_keywords.items():
+                if keyword in text:
+                    categories.add(cat)
+        return ",".join(sorted(categories)) if categories else ""
 
     def get_trusted_sources(self, min_trust: float | None = None) -> list[Source]:
         """Retrieve sources above the trust threshold."""

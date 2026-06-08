@@ -14,9 +14,10 @@ import httpx
 import pytest
 from sqlmodel import Session, select
 
+import prism.agents.blocklist as bl_mod
 from prism.agents.d_ai import DiscoveryAgent
 from prism.db import init_db
-from prism.models import Article, Source, StoryCluster, StoryStatus
+from prism.models import Article, Source, SourceStatus, StoryCluster, StoryStatus
 
 
 @pytest.fixture()
@@ -679,6 +680,7 @@ def test_run_discovery_respects_max_stories(agent, db_engine):
     with patch("prism.agents.d_ai.settings") as mock_settings:
         mock_settings.max_stories_per_cycle = 5
         mock_settings.brave_api_key = "test"
+        mock_settings.source_candidate_max_per_cycle = 5
         agent.run_discovery(queries=["test"], engine=db_engine)
 
     with Session(db_engine) as s:
@@ -698,6 +700,7 @@ def test_run_discovery_no_truncation_under_limit(agent, db_engine):
     with patch("prism.agents.d_ai.settings") as mock_settings:
         mock_settings.max_stories_per_cycle = 50
         mock_settings.brave_api_key = "test"
+        mock_settings.source_candidate_max_per_cycle = 5
         agent.run_discovery(queries=["test"], engine=db_engine)
 
     with Session(db_engine) as s:
@@ -726,6 +729,7 @@ def test_run_discovery_prefers_larger_clusters(agent, db_engine):
     with patch("prism.agents.d_ai.settings") as mock_settings:
         mock_settings.max_stories_per_cycle = 2
         mock_settings.brave_api_key = "test"
+        mock_settings.source_candidate_max_per_cycle = 5
         agent.run_discovery(queries=["test"], engine=db_engine)
 
     with Session(db_engine) as s:
@@ -890,3 +894,152 @@ def test_run_discovery_no_alert_on_success(agent, db_engine):
         agent.run_discovery(queries=["test"], engine=db_engine)
 
     mock_alert.assert_not_called()
+
+
+# --- 06_02: Candidate Discovery & Blocklist ---
+
+
+@pytest.fixture(autouse=False)
+def _blocklist(tmp_path):
+    """Load a minimal blocklist for candidate tests."""
+    bl_mod._blocklist = None
+    f = tmp_path / "blocklist.txt"
+    f.write_text("reddit.com\nyahoo.com\ntwitter.com\n")
+    bl_mod.load_blocklist(f)
+    yield
+    bl_mod._blocklist = None
+
+
+def test_extract_candidates_creates_sources(agent, db_engine, _blocklist):
+    """New domains from Brave results create candidate sources."""
+    results = [{"url": "https://newsite.com/article/1", "title": "News"}]
+    count = agent._extract_candidates(results, db_engine)
+    assert count == 1
+    with Session(db_engine) as session:
+        src = session.exec(select(Source).where(Source.url == "newsite.com")).first()
+        assert src is not None
+        assert src.status == SourceStatus.CANDIDATE
+        assert src.trust_score == 0.0
+        assert src.active is False
+
+
+def test_extract_candidates_sets_discovered_via(agent, db_engine, _blocklist):
+    """Candidate discovered_via is 'brave_search'."""
+    results = [{"url": "https://newsite.com/a", "title": "x"}]
+    agent._extract_candidates(results, db_engine)
+    with Session(db_engine) as session:
+        src = session.exec(select(Source).where(Source.url == "newsite.com")).first()
+        assert src.discovered_via == "brave_search"
+
+
+def test_extract_candidates_respects_cap(agent, db_engine, _blocklist):
+    """At most source_candidate_max_per_cycle candidates created."""
+    results = [{"url": f"https://site{i}.com/a", "title": "x"} for i in range(20)]
+    count = agent._extract_candidates(results, db_engine)
+    assert count == 5  # default cap
+
+
+def test_extract_candidates_skips_blocked(agent, db_engine, _blocklist):
+    """Blocked domains are not created as candidates."""
+    results = [
+        {"url": "https://reddit.com/r/news/1", "title": "x"},
+        {"url": "https://goodsite.com/a", "title": "y"},
+    ]
+    count = agent._extract_candidates(results, db_engine)
+    assert count == 1
+    with Session(db_engine) as session:
+        assert session.exec(select(Source).where(Source.url == "reddit.com")).first() is None
+        assert session.exec(select(Source).where(Source.url == "goodsite.com")).first() is not None
+
+
+def test_extract_candidates_blocks_subdomain(agent, db_engine, _blocklist):
+    """Subdomains of blocked domains are also blocked."""
+    results = [{"url": "https://sports.yahoo.com/article", "title": "x"}]
+    count = agent._extract_candidates(results, db_engine)
+    assert count == 0
+
+
+def test_extract_candidates_no_duplicates(agent, db_engine, _blocklist):
+    """Existing sources are not duplicated."""
+    with Session(db_engine) as session:
+        session.add(Source(name="Existing", url="existing.com"))
+        session.commit()
+
+    results = [{"url": "https://existing.com/article", "title": "x"}]
+    count = agent._extract_candidates(results, db_engine)
+    assert count == 0
+    with Session(db_engine) as session:
+        sources = session.exec(select(Source).where(Source.url == "existing.com")).all()
+        assert len(sources) == 1
+
+
+def test_extract_candidates_increments_sighting(agent, db_engine, _blocklist):
+    """Existing candidate sighting_count incremented on re-sighting."""
+    results = [{"url": "https://newsite.com/a", "title": "x"}]
+    agent._extract_candidates(results, db_engine)  # sighting_count=1
+    agent._extract_candidates(results, db_engine)  # sighting_count=2
+    with Session(db_engine) as session:
+        src = session.exec(select(Source).where(Source.url == "newsite.com")).first()
+        assert src.sighting_count == 2
+
+
+def test_extract_candidates_sighting_only_for_candidates(agent, db_engine, _blocklist):
+    """sighting_count not incremented for non-candidate sources (e.g. seed)."""
+    with Session(db_engine) as session:
+        session.add(Source(
+            name="Trusted", url="trusted.com",
+            status=SourceStatus.SEED, sighting_count=0,
+        ))
+        session.commit()
+
+    results = [{"url": "https://trusted.com/a", "title": "x"}]
+    agent._extract_candidates(results, db_engine)
+    with Session(db_engine) as session:
+        src = session.exec(select(Source).where(Source.url == "trusted.com")).first()
+        assert src.sighting_count == 0  # not incremented
+
+
+def test_infer_categories_from_title(agent, _blocklist):
+    """Categories inferred from article title keywords."""
+    results = [
+        {"url": "https://finsite.com/a", "title": "Finance market update", "description": ""},
+    ]
+    cats = agent._infer_categories("finsite.com", results)
+    assert "finance" in cats
+
+
+def test_infer_categories_from_description(agent, _blocklist):
+    """Categories inferred from description too."""
+    results = [
+        {"url": "https://scisite.com/a", "title": "Breaking news",
+         "description": "New science discovery in health research"},
+    ]
+    cats = agent._infer_categories("scisite.com", results)
+    assert "science" in cats
+    assert "health" in cats
+
+
+def test_infer_categories_empty_when_no_match(agent, _blocklist):
+    """No category keywords → empty string."""
+    results = [
+        {"url": "https://misc.com/a", "title": "Something happened", "description": "Details"},
+    ]
+    cats = agent._infer_categories("misc.com", results)
+    assert cats == ""
+
+
+def test_run_discovery_calls_extract_candidates(agent, db_engine, _blocklist):
+    """run_discovery passes Brave results to _extract_candidates."""
+    agent.search_brave = MagicMock(return_value=[
+        {"url": "https://newsite.com/a", "title": "Story", "description": "d", "source": "New"},
+    ])
+    agent.fetch_rss_sources = MagicMock(return_value=[])
+    agent._extract_candidates = MagicMock(return_value=0)
+
+    agent.run_discovery(queries=["test"], engine=db_engine)
+
+    agent._extract_candidates.assert_called_once()
+    # Verify brave results (not RSS) were passed
+    call_args = agent._extract_candidates.call_args
+    brave_results = call_args[0][0]
+    assert len(brave_results) >= 1
