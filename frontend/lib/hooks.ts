@@ -98,6 +98,74 @@ export function usePerceptionHistory(keywordId: number) {
   });
 }
 
+export type TimeRange = "24h" | "7d" | "30d";
+
+const TIME_RANGE_LIMITS: Record<TimeRange, number> = {
+  "24h": 48,
+  "7d": 336,
+  "30d": 500,
+};
+
+export function useLatestPerception(keywordId: number | undefined) {
+  return useQuery({
+    queryKey: ["perception", keywordId, "latest"],
+    queryFn: () =>
+      apiFetch<PerceptionSnapshot>(
+        `/keywords/${keywordId}/perception`,
+      ),
+    enabled: !!keywordId,
+    staleTime: 2 * 60_000,
+  });
+}
+
+export function usePerceptionHistoryByRange(
+  keywordId: number | undefined,
+  timeRange: TimeRange,
+) {
+  return useQuery({
+    queryKey: ["perception", keywordId, "history", timeRange],
+    queryFn: () =>
+      apiFetch<PerceptionSnapshot[]>(
+        `/keywords/${keywordId}/perception/history?limit=${TIME_RANGE_LIMITS[timeRange]}`,
+      ),
+    enabled: !!keywordId,
+    staleTime: 2 * 60_000,
+  });
+}
+
+export function useAddKeyword() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["keywords", "add"],
+    mutationFn: (payload: {
+      keyword: string;
+      aliases: string;
+      category: string;
+    }) =>
+      apiFetch<Keyword>("/keywords", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["keywords", "active"] });
+    },
+  });
+}
+
+export function useRemoveKeyword() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["keywords", "remove"],
+    mutationFn: (keywordId: number) =>
+      apiFetch<void>(`/keywords/${keywordId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["keywords", "active"] });
+    },
+  });
+}
+
+export { TIME_RANGE_LIMITS };
+
 export function useStoryDetail(storyId: number | undefined) {
   return useQuery({
     queryKey: ["stories", storyId, "detail"],
