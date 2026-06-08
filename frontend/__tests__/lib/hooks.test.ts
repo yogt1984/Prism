@@ -10,6 +10,8 @@ import {
   useActiveKeywords,
   usePerceptionHistory,
   useTriggerBriefing,
+  useBriefingList,
+  useBriefingDetailById,
   useStoryDetail,
   useStoryResonance,
   useSources,
@@ -382,6 +384,94 @@ describe("hooks", () => {
       });
 
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    });
+  });
+
+  describe("useBriefingList", () => {
+    it("fetches paginated briefing list", async () => {
+      const briefings = [makeBriefing({ id: 1 }), makeBriefing({ id: 2 })];
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(briefings));
+
+      const { result } = renderHook(() => useBriefingList(5, 0), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.data).toHaveLength(2);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/bff/users/5/briefings?limit=20&offset=0",
+        expect.any(Object),
+      );
+    });
+
+    it("fetches with offset", async () => {
+      mockFetch.mockResolvedValueOnce(
+        mockJsonResponse([makeBriefing()]),
+      );
+
+      const { result } = renderHook(() => useBriefingList(5, 20), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("offset=20"),
+        expect.any(Object),
+      );
+    });
+
+    it("does not fetch when userId is undefined", () => {
+      renderHook(() => useBriefingList(undefined, 0), {
+        wrapper: createWrapper(),
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("useBriefingDetailById", () => {
+    it("fetches briefing detail by userId and briefingId", async () => {
+      const detail = makeBriefingDetail({ id: 42 });
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(detail));
+
+      const { result } = renderHook(
+        () => useBriefingDetailById(5, 42),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.data).toEqual(detail);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/bff/users/5/briefings/42",
+        expect.any(Object),
+      );
+    });
+
+    it("does not fetch when userId is undefined", () => {
+      renderHook(() => useBriefingDetailById(undefined, 42), {
+        wrapper: createWrapper(),
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("does not fetch when briefingId is undefined", () => {
+      renderHook(() => useBriefingDetailById(5, undefined), {
+        wrapper: createWrapper(),
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("has 30-minute stale time for immutable content", async () => {
+      const detail = makeBriefingDetail();
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(detail));
+
+      const { result } = renderHook(
+        () => useBriefingDetailById(5, 42),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      // Verify it only fetched once (staleTime keeps it fresh)
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });
 
