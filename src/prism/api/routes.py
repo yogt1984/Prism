@@ -248,8 +248,19 @@ class BriefingOut(BaseModel):
     sent: bool
     sent_at: datetime | None
     created_at: datetime
+    has_audio: bool = False
+    audio_duration_sec: int = 0
+    audio_size_bytes: int = 0
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_has_audio(cls, data):  # type: ignore[no-untyped-def]
+        if hasattr(data, "audio_path"):
+            data = dict(data) if not isinstance(data, dict) else data
+            data["has_audio"] = bool(data.get("audio_path", ""))
+        return data
 
 
 class BriefingDetailOut(BriefingOut):

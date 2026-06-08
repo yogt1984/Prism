@@ -120,3 +120,4 @@ class CircuitBreaker:
 
 brave_breaker = CircuitBreaker("brave_api", failure_threshold=5, recovery_timeout=300.0)
 claude_breaker = CircuitBreaker("claude_api", failure_threshold=5, recovery_timeout=300.0)
+openai_tts_breaker = CircuitBreaker("openai_tts", failure_threshold=5, recovery_timeout=300.0)

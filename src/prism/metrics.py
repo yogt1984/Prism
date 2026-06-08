@@ -161,6 +161,10 @@ api_requests_total = Counter("api_requests_total")
 cycle_successes_total = Counter("cycle_successes_total")
 cycle_failures_total = Counter("cycle_failures_total")
 cycle_duration_seconds = Histogram("cycle_duration_seconds")
+tts_generated_total = Counter("tts_generated_total")
+tts_failed_total = Counter("tts_failed_total")
+tts_duration_seconds = Histogram("tts_duration_seconds")
+tts_chars_processed_total = Counter("tts_chars_processed_total")
 
 _timed_logger = logging.getLogger("prism.metrics")
 
