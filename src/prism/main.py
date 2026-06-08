@@ -70,6 +70,18 @@ def briefing_cycle(engine: Engine | None = None) -> None:
         send_alert(f"Briefing cycle failed: {exc}", level=AlertLevel.ERROR)
 
 
+def grace_period_check(engine: Engine | None = None) -> None:
+    try:
+        from prism.subscription import expire_grace_periods
+
+        count = expire_grace_periods(engine or get_engine())
+        if count > 0:
+            logger.info("Grace period check: %d user(s) downgraded", count)
+    except Exception as exc:
+        logger.exception("Grace period check failed")
+        send_alert(f"Grace period check failed: {exc}", level=AlertLevel.ERROR)
+
+
 def build_scheduler() -> BlockingScheduler:
     """Create and configure the scheduler without starting it."""
     scheduler = BlockingScheduler()
@@ -106,6 +118,14 @@ def build_scheduler() -> BlockingScheduler:
         month=cron_parts[3] if len(cron_parts) > 3 else "*",
         day_of_week=cron_parts[4] if len(cron_parts) > 4 else "*",
         id="briefing",
+    )
+
+    scheduler.add_job(
+        grace_period_check,
+        "cron",
+        hour="0",
+        minute="15",
+        id="grace_period_check",
     )
 
     return scheduler

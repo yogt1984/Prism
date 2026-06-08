@@ -236,6 +236,10 @@ class CheckoutResponse(BaseModel):
     checkout_url: str
 
 
+class PortalResponse(BaseModel):
+    portal_url: str
+
+
 class BriefingOut(BaseModel):
     id: int
     user_id: int
@@ -646,6 +650,59 @@ def create_checkout(
         ) from exc
 
     return CheckoutResponse(checkout_url=checkout_session.url)
+
+
+# ── Portal ────────────────────────────────────────────────────────────
+
+
+@router.post("/users/{user_id}/portal", response_model=PortalResponse)
+def create_portal_session(
+    user_id: int,
+    auth_user: User = Depends(require_api_key),
+    session: Session = Depends(_get_session),
+) -> PortalResponse:
+    """Create a Stripe Customer Portal session for subscription management."""
+    if auth_user.id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: you can only access your own resources",
+        )
+
+    from prism.config import get_settings
+
+    s = get_settings()
+    if not s.stripe_secret_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Payment processing is not configured",
+        )
+
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not user.stripe_customer_id:
+        raise HTTPException(
+            status_code=409,
+            detail="No subscription to manage",
+        )
+
+    import stripe
+
+    stripe.api_key = s.stripe_secret_key
+
+    try:
+        portal_session = stripe.billing_portal.Session.create(
+            customer=user.stripe_customer_id,
+            return_url=f"{s.frontend_url}/settings",
+        )
+    except stripe.StripeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Billing portal temporarily unavailable",
+        ) from exc
+
+    return PortalResponse(portal_url=portal_session.url)
 
 
 # ── Briefings ─────────────────────────────────────────────────────────
