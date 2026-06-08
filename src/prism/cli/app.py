@@ -24,6 +24,7 @@ from prism.cli.run import app as run_app
 from prism.cli.source import app as source_app
 from prism.cli.status import app as status_app
 from prism.cli.story import app as story_app
+from prism.cli.subscription import app as subscription_app
 from prism.cli.user import app as user_app
 
 app = typer.Typer(
@@ -42,6 +43,7 @@ app.add_typer(config_app, name="config")
 app.add_typer(user_app, name="user")
 app.add_typer(source_app, name="source")
 app.add_typer(story_app, name="story")
+app.add_typer(subscription_app, name="subscription")
 app.add_typer(briefing_app, name="briefing")
 app.add_typer(db_app, name="db")
 app.add_typer(docs_app, name="docs")
