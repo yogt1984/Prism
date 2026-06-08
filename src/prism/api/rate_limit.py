@@ -43,7 +43,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         while timestamps and timestamps[0] < cutoff:
             timestamps.popleft()
 
+    # Paths excluded from rate limiting (e.g. Stripe sends legitimate bursts)
+    _EXEMPT_PATHS = frozenset({"/webhooks/stripe"})
+
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        if request.url.path in self._EXEMPT_PATHS:
+            return await call_next(request)
+
         client_ip = self._get_client_ip(request)
         now = time.monotonic()
 
