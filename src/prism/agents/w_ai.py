@@ -14,10 +14,11 @@ import resend
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
-from prism.circuit_breaker import claude_breaker
+from prism.alerts import AlertLevel, send_alert
+from prism.circuit_breaker import CircuitOpenError, claude_breaker
 from prism.config import settings
 from prism.db import get_engine
-from prism.metrics import timed_cycle
+from prism.metrics import timed_cycle, tts_failed_total, tts_generated_total
 from prism.models import (
     Briefing,
     BriefingFormat,
@@ -269,6 +270,10 @@ class WriterAgent:
             session.commit()
             session.refresh(briefing)
 
+            # TTS synthesis for audio briefings
+            if fmt == BriefingFormat.AUDIO_SCRIPT:
+                self._try_synthesize_audio(briefing, session)
+
             # Deliver
             if fmt == BriefingFormat.EMAIL:
                 sent = self.send_email(user, content)
@@ -291,3 +296,65 @@ class WriterAgent:
             logger.info("Created briefing %d for user %s (%d stories)",
                         briefing.id, user.email, len(clusters))
             return briefing
+
+    def _try_synthesize_audio(self, briefing: Briefing, session: Session) -> None:
+        """Attempt TTS synthesis. Never raises — failures are logged and alerted."""
+        from prism.config import get_settings
+        from prism.tts import TTSError
+        from prism.tts import synthesize_briefing as _synth
+
+        s = get_settings()
+
+        if not s.openai_api_key:
+            logger.info(
+                "Skipping TTS for briefing %d — OpenAI API key not configured",
+                briefing.id,
+            )
+            return
+
+        try:
+            result = _synth(
+                briefing_id=briefing.id,
+                text=briefing.content_text,
+            )
+
+            # Update briefing with audio metadata
+            briefing.audio_path = f"audio/{briefing.id}.mp3"
+            briefing.audio_duration_sec = result.duration_sec
+            briefing.audio_size_bytes = result.size_bytes
+            session.add(briefing)
+            session.commit()
+
+            logger.info(
+                "TTS complete for briefing %d: %ds, %d bytes",
+                briefing.id,
+                result.duration_sec,
+                result.size_bytes,
+            )
+
+        except TTSError as exc:
+            logger.error(
+                "TTS validation failed for briefing %d: %s", briefing.id, exc
+            )
+            send_alert(
+                f"TTS failed for briefing {briefing.id}: {exc}",
+                level=AlertLevel.WARNING,
+            )
+
+        except CircuitOpenError as exc:
+            logger.warning(
+                "TTS circuit open for briefing %d: %s", briefing.id, exc
+            )
+            send_alert(
+                f"TTS circuit breaker open — audio skipped for briefing {briefing.id}",
+                level=AlertLevel.WARNING,
+            )
+
+        except Exception as exc:
+            logger.exception(
+                "Unexpected TTS error for briefing %d", briefing.id
+            )
+            send_alert(
+                f"TTS unexpected error for briefing {briefing.id}: {exc}",
+                level=AlertLevel.ERROR,
+            )

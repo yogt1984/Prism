@@ -176,3 +176,89 @@ def briefing_resend(briefing_id: Annotated[int, typer.Argument(help="Briefing ID
     else:
         err_console.print(f"  [red]Failed[/red] to resend briefing #{briefing_id}")
         raise typer.Exit(1)
+
+
+@app.command("synthesize")
+def briefing_synthesize(
+    briefing_id: Annotated[int, typer.Argument(help="Briefing ID to synthesize audio for.")],
+) -> None:
+    """Retry TTS synthesis for a specific briefing."""
+    from prism.models import Briefing
+    from prism.tts import synthesize_briefing
+
+    engine = _get_engine()
+    with Session(engine) as session:
+        briefing = session.get(Briefing, briefing_id)
+        if not briefing:
+            err_console.print(f"[red]Briefing not found:[/red] {briefing_id}")
+            raise typer.Exit(1)
+        if not briefing.content_text:
+            err_console.print("[red]Briefing has no text content (not an audio briefing).[/red]")
+            raise typer.Exit(1)
+        if briefing.audio_path:
+            console.print(f"Audio already exists: {briefing.audio_path}")
+            raise typer.Exit(0)
+
+        result = synthesize_briefing(briefing.id, briefing.content_text)
+        briefing.audio_path = f"audio/{briefing.id}.mp3"
+        briefing.audio_duration_sec = result.duration_sec
+        briefing.audio_size_bytes = result.size_bytes
+        session.add(briefing)
+        session.commit()
+
+    if is_json_mode():
+        print_json({
+            "briefing_id": briefing_id,
+            "duration_sec": result.duration_sec,
+            "size_bytes": result.size_bytes,
+        })
+        return
+    console.print(
+        f"  [green]Audio generated[/green] for briefing #{briefing_id}: "
+        f"{result.duration_sec}s, {result.size_bytes} bytes"
+    )
+
+
+@app.command("synthesize-pending")
+def briefing_synthesize_pending() -> None:
+    """Retry TTS for all audio-format briefings missing audio."""
+    from prism.models import Briefing, User
+    from prism.tts import synthesize_briefing
+    from prism.models import BriefingFormat
+
+    engine = _get_engine()
+    with Session(engine) as session:
+        stmt = (
+            select(Briefing)
+            .join(User)
+            .where(
+                Briefing.audio_path == "",
+                Briefing.content_text != "",
+                User.preferred_format == BriefingFormat.AUDIO_SCRIPT.value,
+            )
+        )
+        pending = session.exec(stmt).all()
+
+    console.print(f"Found {len(pending)} briefings pending TTS.")
+
+    ok, fail = 0, 0
+    for briefing in pending:
+        try:
+            result = synthesize_briefing(briefing.id, briefing.content_text)
+            with Session(engine) as session:
+                b = session.get(Briefing, briefing.id)
+                b.audio_path = f"audio/{briefing.id}.mp3"
+                b.audio_duration_sec = result.duration_sec
+                b.audio_size_bytes = result.size_bytes
+                session.add(b)
+                session.commit()
+            console.print(f"  Briefing {briefing.id}: [green]OK[/green] ({result.duration_sec}s)")
+            ok += 1
+        except Exception as exc:
+            err_console.print(f"  Briefing {briefing.id}: [red]FAILED[/red] ({exc})")
+            fail += 1
+
+    if is_json_mode():
+        print_json({"processed": ok, "failed": fail, "total": len(pending)})
+        return
+    console.print(f"\nDone: {ok} synthesized, {fail} failed.")
