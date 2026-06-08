@@ -286,4 +286,30 @@ export function useTriggerBriefing(userId: number | undefined) {
   });
 }
 
+export function useCheckout(userId: number | undefined) {
+  return useMutation({
+    mutationKey: ["checkout", userId],
+    mutationFn: () => {
+      const { subscription } = require("@/lib/api");
+      return subscription.checkout(userId!);
+    },
+    onSuccess: (data: { checkout_url: string }) => {
+      window.location.href = data.checkout_url;
+    },
+  });
+}
+
+export function usePortal(userId: number | undefined) {
+  return useMutation({
+    mutationKey: ["portal", userId],
+    mutationFn: () => {
+      const { subscription } = require("@/lib/api");
+      return subscription.portal(userId!);
+    },
+    onSuccess: (data: { portal_url: string }) => {
+      window.location.href = data.portal_url;
+    },
+  });
+}
+
 export { PAGE_SIZE };

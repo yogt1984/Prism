@@ -43,3 +43,14 @@ export async function signup(payload: SignupPayload) {
     body: JSON.stringify(payload),
   });
 }
+
+export const subscription = {
+  checkout: (userId: number) =>
+    apiFetch<import("./types").CheckoutResponse>(`/users/${userId}/checkout`, {
+      method: "POST",
+    }),
+  portal: (userId: number) =>
+    apiFetch<import("./types").PortalResponse>(`/users/${userId}/portal`, {
+      method: "POST",
+    }),
+};

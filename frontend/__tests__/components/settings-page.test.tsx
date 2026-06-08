@@ -4,6 +4,12 @@ import SettingsPage, { setsEqual } from "@/app/settings/page";
 import { createWrapper } from "../helpers/query-wrapper";
 import type { User } from "@/lib/types";
 
+const mockSearchParams = vi.hoisted(() => vi.fn(() => new URLSearchParams()));
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: mockSearchParams,
+}));
+
 const mockSession = vi.hoisted(() =>
   vi.fn(() => ({
     data: {
@@ -38,6 +44,9 @@ function makeUser(overrides: Partial<User> = {}): User {
     preferred_format: "email",
     briefing_depth: 10,
     is_pro: false,
+    pro_since: null,
+    pro_until: null,
+    has_stripe_subscription: false,
     created_at: "2026-05-15T10:00:00Z",
     ...overrides,
   };
@@ -287,7 +296,7 @@ describe("SettingsPage", () => {
     });
 
     it("shows Pro plan badge for Pro users", async () => {
-      const proUser = makeUser({ is_pro: true });
+      const proUser = makeUser({ is_pro: true, has_stripe_subscription: true });
       mockFetch.mockImplementation((url: string) => {
         if (url.includes("/users/5")) {
           return Promise.resolve(mockJsonResponse(proUser));
@@ -301,15 +310,16 @@ describe("SettingsPage", () => {
       });
     });
 
-    it("shows disabled upgrade button for free users", async () => {
+    it("shows upgrade card with enabled button for free users", async () => {
       render(<SettingsPage />, { wrapper: createWrapper() });
       await waitFor(() => {
-        expect(screen.getByTestId("upgrade-btn")).toBeDisabled();
+        expect(screen.getByTestId("upgrade-card")).toBeInTheDocument();
       });
+      expect(screen.getByTestId("upgrade-btn")).not.toBeDisabled();
     });
 
-    it("hides upgrade button for pro users", async () => {
-      const proUser = makeUser({ is_pro: true });
+    it("hides upgrade card for pro users", async () => {
+      const proUser = makeUser({ is_pro: true, has_stripe_subscription: true });
       mockFetch.mockImplementation((url: string) => {
         if (url.includes("/users/5")) {
           return Promise.resolve(mockJsonResponse(proUser));
@@ -321,7 +331,132 @@ describe("SettingsPage", () => {
       await waitFor(() => {
         expect(screen.getByTestId("settings-page")).toBeInTheDocument();
       });
-      expect(screen.queryByTestId("upgrade-btn")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("upgrade-card")).not.toBeInTheDocument();
+    });
+
+    it("shows manage button for pro users", async () => {
+      const proUser = makeUser({ is_pro: true, has_stripe_subscription: true });
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes("/users/5")) {
+          return Promise.resolve(mockJsonResponse(proUser));
+        }
+        return Promise.resolve(mockJsonResponse({}, 404));
+      });
+
+      render(<SettingsPage />, { wrapper: createWrapper() });
+      await waitFor(() => {
+        expect(screen.getByTestId("manage-btn")).toBeInTheDocument();
+      });
+    });
+
+    it("hides manage button for free users", async () => {
+      render(<SettingsPage />, { wrapper: createWrapper() });
+      await waitFor(() => {
+        expect(screen.getByTestId("settings-page")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("manage-btn")).not.toBeInTheDocument();
+    });
+
+    it("shows grace period warning for pro user with future pro_until", async () => {
+      const graceUser = makeUser({
+        is_pro: true,
+        has_stripe_subscription: true,
+        pro_until: "2099-01-01T00:00:00Z",
+      });
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes("/users/5")) {
+          return Promise.resolve(mockJsonResponse(graceUser));
+        }
+        return Promise.resolve(mockJsonResponse({}, 404));
+      });
+
+      render(<SettingsPage />, { wrapper: createWrapper() });
+      await waitFor(() => {
+        expect(screen.getByTestId("grace-period-warning")).toBeInTheDocument();
+      });
+    });
+
+    it("hides grace period warning when pro_until is null", async () => {
+      const proUser = makeUser({ is_pro: true, has_stripe_subscription: true });
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes("/users/5")) {
+          return Promise.resolve(mockJsonResponse(proUser));
+        }
+        return Promise.resolve(mockJsonResponse({}, 404));
+      });
+
+      render(<SettingsPage />, { wrapper: createWrapper() });
+      await waitFor(() => {
+        expect(screen.getByTestId("settings-page")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("grace-period-warning")).not.toBeInTheDocument();
+    });
+
+    it("shows resubscribe notice for expired user", async () => {
+      const expiredUser = makeUser({
+        is_pro: false,
+        pro_until: "2024-01-01T00:00:00Z",
+      });
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes("/users/5")) {
+          return Promise.resolve(mockJsonResponse(expiredUser));
+        }
+        return Promise.resolve(mockJsonResponse({}, 404));
+      });
+
+      render(<SettingsPage />, { wrapper: createWrapper() });
+      await waitFor(() => {
+        expect(screen.getByTestId("resubscribe-notice")).toBeInTheDocument();
+      });
+    });
+
+    it("shows success banner when upgraded=true in URL", async () => {
+      mockSearchParams.mockReturnValue(new URLSearchParams("upgraded=true"));
+      const proUser = makeUser({ is_pro: true, has_stripe_subscription: true });
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes("/users/5")) {
+          return Promise.resolve(mockJsonResponse(proUser));
+        }
+        return Promise.resolve(mockJsonResponse({}, 404));
+      });
+
+      render(<SettingsPage />, { wrapper: createWrapper() });
+      await waitFor(() => {
+        expect(screen.getByTestId("success-banner")).toBeInTheDocument();
+      });
+      mockSearchParams.mockReturnValue(new URLSearchParams());
+    });
+
+    it("shows cancelled notice when upgrade_cancelled=true in URL", async () => {
+      mockSearchParams.mockReturnValue(
+        new URLSearchParams("upgrade_cancelled=true"),
+      );
+
+      render(<SettingsPage />, { wrapper: createWrapper() });
+      await waitFor(() => {
+        expect(screen.getByTestId("cancelled-notice")).toBeInTheDocument();
+      });
+      expect(screen.getByText(/cancelled/i)).toBeInTheDocument();
+      mockSearchParams.mockReturnValue(new URLSearchParams());
+    });
+
+    it("shows pro_since date for pro users", async () => {
+      const proUser = makeUser({
+        is_pro: true,
+        has_stripe_subscription: true,
+        pro_since: "2026-03-15T00:00:00Z",
+      });
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes("/users/5")) {
+          return Promise.resolve(mockJsonResponse(proUser));
+        }
+        return Promise.resolve(mockJsonResponse({}, 404));
+      });
+
+      render(<SettingsPage />, { wrapper: createWrapper() });
+      await waitFor(() => {
+        expect(screen.getByTestId("pro-since")).toBeInTheDocument();
+      });
     });
 
     it("renders feature comparison table", async () => {
