@@ -380,6 +380,33 @@ def test_synthesize_circuit_breaker_opens(tts_env, mock_openai):
     openai_tts_breaker.reset()
 
 
+def test_synthesize_retries_on_429(tts_env, mock_openai):
+    """First call returns 429, second succeeds — verifies retry works."""
+    import httpx
+
+    from prism.circuit_breaker import openai_tts_breaker
+
+    openai_tts_breaker.reset()
+
+    response_429 = httpx.Response(429, request=httpx.Request("POST", "https://api.openai.com"))
+    ok_response = Mock()
+    ok_response.content = SAMPLE_MP3
+
+    mock_openai.audio.speech.create.side_effect = [
+        httpx.HTTPStatusError("rate limited", request=response_429.request, response=response_429),
+        ok_response,
+    ]
+
+    with patch("prism.retry.time.sleep"):  # skip actual sleep
+        result = synthesize_briefing(1, "Test text for retry.")
+
+    assert result.path.exists()
+    assert result.chunks_processed == 1
+    assert mock_openai.audio.speech.create.call_count == 2
+
+    openai_tts_breaker.reset()
+
+
 # ── Integration test (real OpenAI, guarded) ─────────────────────────
 
 
