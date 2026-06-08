@@ -1,5 +1,6 @@
-"""Tests for 06_01: Source lifecycle schema, migration, config, and seed."""
+"""Tests for 06_01 / 06_03 / 06_04: Source lifecycle schema, migration, and pipeline."""
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -8,8 +9,21 @@ from alembic.config import Config
 from sqlalchemy import create_engine as sa_create_engine, inspect as sa_inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from prism.agents.source_lifecycle import promote_to_probation
-from prism.models import Source, SourceStatus
+from prism.agents.source_lifecycle import (
+    check_trusted_demotion,
+    cross_validate_cluster,
+    evaluate_probation_sources,
+    promote_to_probation,
+)
+from prism.models import (
+    Article,
+    BiasLabel,
+    Perspective,
+    Source,
+    SourceStatus,
+    StoryCluster,
+    StoryStatus,
+)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -379,3 +393,425 @@ def test_promote_idempotent(tmp_path):
 
     assert promote_to_probation(engine) == 1
     assert promote_to_probation(engine) == 0  # already probation
+
+
+# ── Cross-validation (06_04) ───────────────────────────────────────
+
+
+def _make_cluster_with_articles(engine, sources_and_statuses, article_count=None):
+    """Helper: create a cluster with articles from given sources.
+
+    sources_and_statuses: list of (name, url, status) tuples.
+    Returns (cluster_id, source_ids).
+    """
+    with Session(engine) as session:
+        cluster = StoryCluster(
+            headline="Test cluster",
+            article_count=article_count or len(sources_and_statuses),
+            status=StoryStatus.ANALYZED,
+        )
+        session.add(cluster)
+        session.commit()
+        session.refresh(cluster)
+        cid = cluster.id
+
+        source_ids = []
+        for name, url, status in sources_and_statuses:
+            src = Source(name=name, url=url, status=status, active=True)
+            session.add(src)
+            session.commit()
+            session.refresh(src)
+            source_ids.append(src.id)
+
+            article = Article(
+                cluster_id=cid,
+                source_id=src.id,
+                title=f"Article from {name}",
+                url=f"https://{url}/article",
+            )
+            session.add(article)
+
+        session.commit()
+    return cid, source_ids
+
+
+def test_cross_validate_with_trusted(tmp_path):
+    """Probation source validated when cluster has trusted source."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    cid, sids = _make_cluster_with_articles(engine, [
+        ("Trusted", "trusted.com", SourceStatus.SEED),
+        ("Prob", "prob.com", SourceStatus.PROBATION),
+    ])
+
+    cross_validate_cluster(cid, engine)
+
+    with Session(engine) as session:
+        src = session.get(Source, sids[1])
+        assert src.articles_validated == 1
+        assert src.articles_failed == 0
+
+
+def test_cross_validate_lone_cluster(tmp_path):
+    """Probation source penalized in single-source cluster."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    cid, sids = _make_cluster_with_articles(engine, [
+        ("Prob", "prob.com", SourceStatus.PROBATION),
+    ], article_count=1)
+
+    cross_validate_cluster(cid, engine)
+
+    with Session(engine) as session:
+        src = session.get(Source, sids[0])
+        assert src.articles_failed == 1
+        assert src.articles_validated == 0
+
+
+def test_cross_validate_multi_source_no_trusted_ambiguous(tmp_path):
+    """Multi-source cluster without trusted sources → no failure (ambiguous)."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    cid, sids = _make_cluster_with_articles(engine, [
+        ("Prob1", "prob1.com", SourceStatus.PROBATION),
+        ("Prob2", "prob2.com", SourceStatus.PROBATION),
+        ("Prob3", "prob3.com", SourceStatus.PROBATION),
+    ], article_count=3)
+
+    cross_validate_cluster(cid, engine)
+
+    with Session(engine) as session:
+        for sid in sids:
+            src = session.get(Source, sid)
+            assert src.articles_failed == 0
+            assert src.articles_validated == 0
+
+
+def test_cross_validate_trust_score_updates(tmp_path):
+    """Trust score formula: 0.1 + (validated / total) * 0.4."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    # Pre-set: 8 validated, 2 failed → after one more validated: 9/12
+    with Session(engine) as session:
+        src = Source(
+            name="Prob", url="prob.com", status=SourceStatus.PROBATION,
+            articles_validated=8, articles_failed=2,
+        )
+        session.add(src)
+        session.commit()
+        sid = src.id
+
+        trusted = Source(name="AP", url="ap.com", status=SourceStatus.SEED)
+        session.add(trusted)
+        session.commit()
+
+        cluster = StoryCluster(headline="Test", article_count=2, status=StoryStatus.ANALYZED)
+        session.add(cluster)
+        session.commit()
+        session.refresh(cluster)
+        cid = cluster.id
+
+        session.add(Article(cluster_id=cid, source_id=sid, title="A", url="https://prob.com/a"))
+        session.add(Article(cluster_id=cid, source_id=trusted.id, title="B", url="https://ap.com/a"))
+        session.commit()
+
+    cross_validate_cluster(cid, engine)
+
+    with Session(engine) as session:
+        src = session.get(Source, sid)
+        assert src.articles_validated == 9
+        # trust = 0.1 + (9/11) * 0.4 ≈ 0.427
+        expected = 0.1 + (9 / 11) * 0.4
+        assert abs(src.trust_score - expected) < 0.01
+
+
+def test_cross_validate_no_probation_noop(tmp_path):
+    """Cluster with no probation sources → no changes."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    cid, _ = _make_cluster_with_articles(engine, [
+        ("Trusted", "trusted.com", SourceStatus.SEED),
+        ("Also Trusted", "also.com", SourceStatus.TRUSTED),
+    ])
+
+    cross_validate_cluster(cid, engine)  # should not crash
+
+
+# ── Evaluation (06_04) ─────────────────────────────────────────────
+
+
+def _make_probation_source(engine, url, validated, failed, days_ago=15):
+    """Helper: create a probation source with given stats."""
+    with Session(engine) as session:
+        src = Source(
+            name=url, url=url,
+            status=SourceStatus.PROBATION,
+            active=True,
+            trust_score=0.1,
+            probation_start=datetime.now(UTC) - timedelta(days=days_ago),
+            articles_validated=validated,
+            articles_failed=failed,
+        )
+        session.add(src)
+        session.commit()
+        return src.id
+
+
+def test_evaluate_promotes_good_source(tmp_path):
+    """Source with 12 validated / 3 failed = 80% is promoted."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+    sid = _make_probation_source(engine, "good.com", validated=12, failed=3)
+
+    results = evaluate_probation_sources(engine)
+    assert results["promoted"] == 1
+
+    with Session(engine) as session:
+        src = session.get(Source, sid)
+        assert src.status == SourceStatus.TRUSTED
+        assert src.trust_score == pytest.approx(0.5)
+        assert src.last_evaluated is not None
+
+
+def test_evaluate_rejects_bad_source(tmp_path):
+    """Source with 5 validated / 8 failed = 38% is rejected."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+    sid = _make_probation_source(engine, "bad.com", validated=5, failed=8)
+
+    results = evaluate_probation_sources(engine)
+    assert results["rejected"] == 1
+
+    with Session(engine) as session:
+        src = session.get(Source, sid)
+        assert src.status == SourceStatus.REJECTED
+        assert src.active is False
+        assert src.trust_score == 0.0
+        assert "ratio" in src.rejection_reason.lower()
+
+
+def test_evaluate_resets_insufficient_data(tmp_path):
+    """Source with 2 validated articles reset to candidate."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+    sid = _make_probation_source(engine, "sparse.com", validated=2, failed=0)
+
+    results = evaluate_probation_sources(engine)
+    assert results["reset"] == 1
+
+    with Session(engine) as session:
+        src = session.get(Source, sid)
+        assert src.status == SourceStatus.CANDIDATE
+        assert src.active is False
+        assert src.probation_start is None
+        assert src.articles_validated == 0
+
+
+def test_evaluate_skips_recent_probation(tmp_path):
+    """Source still within probation window not evaluated."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+    _make_probation_source(engine, "recent.com", validated=12, failed=0, days_ago=5)
+
+    results = evaluate_probation_sources(engine)
+    assert results["promoted"] == 0
+    assert results["rejected"] == 0
+    assert results["reset"] == 0
+
+
+def test_evaluate_last_evaluated_set(tmp_path):
+    """last_evaluated is set on all evaluated sources."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+    sid = _make_probation_source(engine, "any.com", validated=12, failed=1)
+
+    evaluate_probation_sources(engine)
+
+    with Session(engine) as session:
+        src = session.get(Source, sid)
+        assert src.last_evaluated is not None
+
+
+# ── Bias inference (06_04) ─────────────────────────────────────────
+
+
+def test_bias_inferred_on_promotion(tmp_path):
+    """Promoted source gets bias label from perspective sentiment."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        src = Source(
+            name="Lefty", url="lefty.com",
+            status=SourceStatus.PROBATION, active=True,
+            trust_score=0.1,
+            probation_start=datetime.now(UTC) - timedelta(days=15),
+            articles_validated=12, articles_failed=1,
+        )
+        session.add(src)
+        session.commit()
+        sid = src.id
+
+        # Create cluster + article + perspectives with negative sentiment
+        cluster = StoryCluster(headline="Test", article_count=2, status=StoryStatus.ANALYZED)
+        session.add(cluster)
+        session.commit()
+        session.refresh(cluster)
+
+        session.add(Article(
+            cluster_id=cluster.id, source_id=sid,
+            title="Left article", url="https://lefty.com/a",
+        ))
+        session.add(Perspective(
+            cluster_id=cluster.id, source_id=sid,
+            summary="Left framing", sentiment=-0.5,
+        ))
+        session.commit()
+
+    evaluate_probation_sources(engine)
+
+    with Session(engine) as session:
+        src = session.get(Source, sid)
+        assert src.status == SourceStatus.TRUSTED
+        assert src.bias_label == BiasLabel.LEFT
+
+
+def test_bias_unknown_without_perspectives(tmp_path):
+    """Promoted source with no perspectives gets UNKNOWN bias."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+    sid = _make_probation_source(engine, "nopersp.com", validated=12, failed=1)
+
+    evaluate_probation_sources(engine)
+
+    with Session(engine) as session:
+        src = session.get(Source, sid)
+        assert src.status == SourceStatus.TRUSTED
+        assert src.bias_label == BiasLabel.UNKNOWN
+
+
+def test_bias_center_for_neutral_sentiment(tmp_path):
+    """Source with avg sentiment near 0 gets CENTER bias."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        src = Source(
+            name="Center", url="center.com",
+            status=SourceStatus.PROBATION, active=True,
+            trust_score=0.1,
+            probation_start=datetime.now(UTC) - timedelta(days=15),
+            articles_validated=12, articles_failed=2,
+        )
+        session.add(src)
+        session.commit()
+        sid = src.id
+
+        cluster = StoryCluster(headline="Test", article_count=1, status=StoryStatus.ANALYZED)
+        session.add(cluster)
+        session.commit()
+        session.refresh(cluster)
+
+        session.add(Article(
+            cluster_id=cluster.id, source_id=sid,
+            title="Neutral", url="https://center.com/a",
+        ))
+        session.add(Perspective(
+            cluster_id=cluster.id, source_id=sid,
+            summary="Neutral framing", sentiment=0.05,
+        ))
+        session.commit()
+
+    evaluate_probation_sources(engine)
+
+    with Session(engine) as session:
+        src = session.get(Source, sid)
+        assert src.bias_label == BiasLabel.CENTER
+
+
+# ── Demotion (06_04) ───────────────────────────────────────────────
+
+
+def test_demote_trusted_with_failures(tmp_path):
+    """Trusted source with 5+ failures demoted to probation."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        session.add(Source(
+            name="Failing", url="failing.com",
+            status=SourceStatus.TRUSTED,
+            trust_score=0.5, articles_failed=5,
+        ))
+        session.commit()
+
+    demoted = check_trusted_demotion(engine)
+    assert demoted == 1
+
+    with Session(engine) as session:
+        src = session.exec(select(Source).where(Source.url == "failing.com")).first()
+        assert src.status == SourceStatus.PROBATION
+        assert src.trust_score == pytest.approx(0.1)
+        assert src.probation_start is not None
+        assert src.articles_validated == 0
+        assert src.articles_failed == 0
+
+
+def test_seed_never_demoted(tmp_path):
+    """Seed sources immune to demotion."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        session.add(Source(
+            name="Reuters", url="reuters.com",
+            status=SourceStatus.SEED,
+            trust_score=0.95, articles_failed=100,
+        ))
+        session.commit()
+
+    demoted = check_trusted_demotion(engine)
+    assert demoted == 0
+
+    with Session(engine) as session:
+        src = session.exec(select(Source).where(Source.url == "reuters.com")).first()
+        assert src.status == SourceStatus.SEED
+
+
+def test_demote_below_threshold_not_demoted(tmp_path):
+    """Trusted source with 4 failures (below threshold) not demoted."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        session.add(Source(
+            name="OK", url="ok.com",
+            status=SourceStatus.TRUSTED,
+            trust_score=0.5, articles_failed=4,
+        ))
+        session.commit()
+
+    demoted = check_trusted_demotion(engine)
+    assert demoted == 0
+
+
+# ── Scheduler job (06_04) ──────────────────────────────────────────
+
+
+def test_scheduler_has_source_evaluation_job():
+    """build_scheduler includes the source_evaluation cron job."""
+    from unittest.mock import patch
+    with patch("prism.main.settings") as mock_settings:
+        mock_settings.discovery_interval_hours = 4
+        mock_settings.briefing_schedule_cron = "0 7 * * *"
+        mock_settings.perception_scan_interval_minutes = 15
+
+        from prism.main import build_scheduler
+        scheduler = build_scheduler()
+        job_ids = {j.id for j in scheduler.get_jobs()}
+        assert "source_evaluation" in job_ids
