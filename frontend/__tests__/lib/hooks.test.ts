@@ -10,6 +10,11 @@ import {
   useActiveKeywords,
   usePerceptionHistory,
   useTriggerBriefing,
+  useStoryDetail,
+  useStoryResonance,
+  useSources,
+  useSourceMap,
+  useRecordEngagement,
   PAGE_SIZE,
 } from "@/lib/hooks";
 import {
@@ -19,6 +24,10 @@ import {
   makeRecentStories,
   makeKeyword,
   makePerceptionHistory,
+  makeStoryDetail,
+  makeResonance,
+  makeSource,
+  makeEngagement,
 } from "../helpers/fixtures";
 
 const mockFetch = vi.fn();
@@ -230,6 +239,149 @@ describe("hooks", () => {
         "/api/bff/users/5/briefings",
         expect.objectContaining({ method: "POST" }),
       );
+    });
+  });
+
+  describe("useStoryDetail", () => {
+    it("fetches story detail by id", async () => {
+      const story = makeStoryDetail({ id: 42 });
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(story));
+
+      const { result } = renderHook(() => useStoryDetail(42), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.data).toEqual(story);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/bff/stories/42",
+        expect.any(Object),
+      );
+    });
+
+    it("does not fetch when storyId is undefined", () => {
+      renderHook(() => useStoryDetail(undefined), {
+        wrapper: createWrapper(),
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("does not fetch when storyId is 0", () => {
+      renderHook(() => useStoryDetail(0 as unknown as undefined), {
+        wrapper: createWrapper(),
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("useStoryResonance", () => {
+    it("fetches resonance data for a story", async () => {
+      const resonance = makeResonance({ cluster_id: 7 });
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(resonance));
+
+      const { result } = renderHook(() => useStoryResonance(7), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.data).toEqual(resonance);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/bff/stories/7/resonance",
+        expect.any(Object),
+      );
+    });
+
+    it("does not fetch when storyId is undefined", () => {
+      renderHook(() => useStoryResonance(undefined), {
+        wrapper: createWrapper(),
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("useSources", () => {
+    it("fetches active sources", async () => {
+      const sources = [makeSource({ id: 1 }), makeSource({ id: 2 })];
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(sources));
+
+      const { result } = renderHook(() => useSources(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.data).toHaveLength(2);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/bff/sources?active=true",
+        expect.any(Object),
+      );
+    });
+  });
+
+  describe("useSourceMap", () => {
+    it("returns a Map of sources keyed by id", async () => {
+      const sources = [
+        makeSource({ id: 1, name: "Reuters" }),
+        makeSource({ id: 2, name: "AP" }),
+      ];
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(sources));
+
+      const { result } = renderHook(() => useSourceMap(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => expect(result.current.size).toBe(2));
+      expect(result.current.get(1)?.name).toBe("Reuters");
+      expect(result.current.get(2)?.name).toBe("AP");
+    });
+
+    it("returns empty Map before data loads", () => {
+      mockFetch.mockReturnValue(new Promise(() => {})); // never resolves
+      const { result } = renderHook(() => useSourceMap(), {
+        wrapper: createWrapper(),
+      });
+      expect(result.current.size).toBe(0);
+    });
+  });
+
+  describe("useRecordEngagement", () => {
+    it("sends POST with engagement payload", async () => {
+      const engagement = makeEngagement();
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(engagement, 201));
+
+      const { result } = renderHook(() => useRecordEngagement(), {
+        wrapper: createWrapper(),
+      });
+
+      result.current.mutate({
+        user_id: 5,
+        cluster_id: 1,
+        action: "open",
+        read_time_sec: 0,
+      });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/bff/engagements",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    it("sends save engagement", async () => {
+      const engagement = makeEngagement({ action: "save" });
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(engagement, 201));
+
+      const { result } = renderHook(() => useRecordEngagement(), {
+        wrapper: createWrapper(),
+      });
+
+      result.current.mutate({
+        user_id: 5,
+        cluster_id: 1,
+        action: "save",
+        read_time_sec: 30,
+      });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
     });
   });
 
