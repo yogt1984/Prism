@@ -102,7 +102,18 @@ export interface User {
   preferred_format: BriefingFormat;
   briefing_depth: number;
   is_pro: boolean;
+  pro_since: string | null;
+  pro_until: string | null;
+  has_stripe_subscription: boolean;
   created_at: string;
+}
+
+export interface CheckoutResponse {
+  checkout_url: string;
+}
+
+export interface PortalResponse {
+  portal_url: string;
 }
 
 export interface Briefing {

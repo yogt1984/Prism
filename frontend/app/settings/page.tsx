@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import InterestToggle from "@/components/settings/InterestToggle";
 import DepthSlider from "@/components/settings/DepthSlider";
@@ -8,7 +9,10 @@ import FormatSelector from "@/components/settings/FormatSelector";
 import FeatureComparison from "@/components/settings/FeatureComparison";
 import PlanBadge from "@/components/settings/PlanBadge";
 import SaveButton from "@/components/settings/SaveButton";
-import { useUserProfile, useUpdateUser } from "@/lib/hooks";
+import UpgradeCard from "@/components/subscription/UpgradeCard";
+import GracePeriodWarning from "@/components/subscription/GracePeriodWarning";
+import SuccessBanner from "@/components/subscription/SuccessBanner";
+import { useUserProfile, useUpdateUser, useCheckout, usePortal } from "@/lib/hooks";
 import { CATEGORIES, type BriefingFormat } from "@/lib/types";
 
 function setsEqual(a: Set<string>, b: Set<string>) {
@@ -22,8 +26,28 @@ export default function SettingsPage() {
   const userId = (session?.user as Record<string, unknown> | undefined)
     ?.id as number | undefined;
 
+  const searchParams = useSearchParams();
   const { data: user, isLoading, error } = useUserProfile(userId);
   const updateUser = useUpdateUser(userId);
+  const checkout = useCheckout(userId);
+  const portal = usePortal(userId);
+
+  // Post-checkout state
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [showCancelled, setShowCancelled] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+
+  // Detect return from Stripe
+  useEffect(() => {
+    if (searchParams?.get("upgraded") === "true") {
+      setShowSuccess(true);
+    }
+    if (searchParams?.get("upgrade_cancelled") === "true") {
+      setShowCancelled(true);
+      const timer = setTimeout(() => setShowCancelled(false), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [searchParams]);
 
   // Profile form state
   const [name, setName] = useState("");
@@ -69,6 +93,20 @@ export default function SettingsPage() {
       { onError: (err) => setSaveError(err.message) },
     );
   }, [format, depth, updateUser]);
+
+  const handleUpgrade = useCallback(() => {
+    setCheckoutError(null);
+    checkout.mutate(undefined, {
+      onError: (err) => setCheckoutError(err.message),
+    });
+  }, [checkout]);
+
+  const handleManage = useCallback(() => {
+    setCheckoutError(null);
+    portal.mutate(undefined, {
+      onError: (err) => setCheckoutError(err.message),
+    });
+  }, [portal]);
 
   const toggleInterest = (cat: string) => {
     setInterests((prev) => {
@@ -236,6 +274,25 @@ export default function SettingsPage() {
       <section data-testid="subscription-section">
         <h2 className="text-lg font-semibold mb-4">Subscription</h2>
         <div className="space-y-4">
+          {showSuccess && user.is_pro && (
+            <SuccessBanner onDismiss={() => setShowSuccess(false)} />
+          )}
+          {showCancelled && (
+            <div
+              className="rounded-md bg-gray-50 border border-gray-200 p-3 text-sm text-gray-600"
+              data-testid="cancelled-notice"
+            >
+              Upgrade cancelled. You can try again anytime.
+            </div>
+          )}
+          {checkoutError && (
+            <div
+              className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700"
+              data-testid="checkout-error"
+            >
+              {checkoutError}
+            </div>
+          )}
           <div className="flex items-center gap-3">
             <PlanBadge tier={user.is_pro ? "Pro" : "Free"} />
             <span className="text-sm text-gray-500">
@@ -243,16 +300,52 @@ export default function SettingsPage() {
                 ? "You have full access to all features"
                 : "Upgrade to unlock all features"}
             </span>
+            {user.is_pro && user.pro_since && (
+              <span className="text-xs text-gray-400" data-testid="pro-since">
+                Pro since {new Date(user.pro_since).toLocaleDateString("en-US", {
+                  year: "numeric", month: "short", day: "numeric",
+                })}
+              </span>
+            )}
           </div>
-          {!user.is_pro && (
-            <button
-              disabled
-              className="px-4 py-2 text-sm font-medium rounded-md bg-violet-600 text-white opacity-50 cursor-not-allowed"
-              data-testid="upgrade-btn"
-              title="Coming soon"
+          {user.is_pro && user.pro_until && new Date(user.pro_until) > new Date() && (
+            <GracePeriodWarning
+              proUntil={user.pro_until}
+              onUpdatePayment={handleManage}
+              isLoading={portal.isPending}
+            />
+          )}
+          {!user.is_pro && user.pro_until && (
+            <div
+              className="rounded-md bg-gray-50 border border-gray-200 p-3 text-sm text-gray-600"
+              data-testid="resubscribe-notice"
             >
-              Upgrade to Pro — $7/month
-            </button>
+              Your Pro subscription ended on{" "}
+              {new Date(user.pro_until).toLocaleDateString("en-US", {
+                year: "numeric", month: "long", day: "numeric",
+              })}.
+            </div>
+          )}
+          {!user.is_pro && (
+            <UpgradeCard
+              onUpgrade={handleUpgrade}
+              isLoading={checkout.isPending}
+            />
+          )}
+          {user.is_pro && (
+            <div data-testid="manage-section">
+              <button
+                onClick={handleManage}
+                disabled={portal.isPending}
+                className="px-4 py-2 text-sm font-medium rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                data-testid="manage-btn"
+              >
+                {portal.isPending ? "Opening..." : "Manage Subscription"}
+              </button>
+              <p className="text-xs text-gray-400 mt-1">
+                Update payment method, view invoices, or cancel
+              </p>
+            </div>
           )}
           <FeatureComparison />
         </div>
