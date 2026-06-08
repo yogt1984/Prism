@@ -144,6 +144,36 @@ export function useRecordEngagement() {
   });
 }
 
+export function useBriefingList(
+  userId: number | undefined,
+  offset: number = 0,
+) {
+  return useQuery({
+    queryKey: ["briefings", userId, "list", offset],
+    queryFn: () =>
+      apiFetch<Briefing[]>(
+        `/users/${userId}/briefings?limit=${PAGE_SIZE}&offset=${offset}`,
+      ),
+    enabled: !!userId,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useBriefingDetailById(
+  userId: number | undefined,
+  briefingId: number | undefined,
+) {
+  return useQuery({
+    queryKey: ["briefings", userId, briefingId],
+    queryFn: () =>
+      apiFetch<BriefingDetail>(
+        `/users/${userId}/briefings/${briefingId}`,
+      ),
+    enabled: !!userId && !!briefingId,
+    staleTime: 30 * 60_000,
+  });
+}
+
 export function useTriggerBriefing(userId: number | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -155,6 +185,9 @@ export function useTriggerBriefing(userId: number | undefined) {
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["briefings", userId, "latest"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["briefings", userId, "list"],
       });
     },
   });
