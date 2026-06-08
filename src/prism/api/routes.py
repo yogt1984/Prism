@@ -232,6 +232,10 @@ class UserOut(BaseModel):
         return data
 
 
+class CheckoutResponse(BaseModel):
+    checkout_url: str
+
+
 class BriefingOut(BaseModel):
     id: int
     user_id: int
@@ -570,6 +574,78 @@ def update_user(
     session.commit()
     session.refresh(user)
     return UserOut.model_validate(user)
+
+
+# ── Checkout ──────────────────────────────────────────────────────────
+
+
+@router.post("/users/{user_id}/checkout", response_model=CheckoutResponse)
+def create_checkout(
+    user_id: int,
+    auth_user: User = Depends(require_api_key),
+    session: Session = Depends(_get_session),
+) -> CheckoutResponse:
+    """Create a Stripe Checkout Session for Pro upgrade."""
+    if auth_user.id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: you can only access your own resources",
+        )
+
+    from prism.config import get_settings
+
+    s = get_settings()
+    if not s.stripe_secret_key or not s.stripe_price_id:
+        raise HTTPException(
+            status_code=503,
+            detail="Payment processing is not configured",
+        )
+
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.is_pro:
+        raise HTTPException(
+            status_code=409,
+            detail="User is already a Pro subscriber",
+        )
+
+    import stripe
+
+    stripe.api_key = s.stripe_secret_key
+
+    try:
+        if user.stripe_customer_id:
+            customer_id = user.stripe_customer_id
+        else:
+            customer = stripe.Customer.create(
+                email=user.email,
+                metadata={"prism_user_id": str(user.id)},
+            )
+            customer_id = customer.id
+            user.stripe_customer_id = customer_id
+            session.add(user)
+            session.commit()
+
+        checkout_session = stripe.checkout.Session.create(
+            customer=customer_id,
+            mode="subscription",
+            line_items=[{"price": s.stripe_price_id, "quantity": 1}],
+            success_url=f"{s.frontend_url}/settings?upgraded=true",
+            cancel_url=f"{s.frontend_url}/settings?upgrade_cancelled=true",
+            metadata={"prism_user_id": str(user.id)},
+            subscription_data={
+                "metadata": {"prism_user_id": str(user.id)},
+            },
+        )
+    except stripe.StripeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Payment service temporarily unavailable",
+        ) from exc
+
+    return CheckoutResponse(checkout_url=checkout_session.url)
 
 
 # ── Briefings ─────────────────────────────────────────────────────────

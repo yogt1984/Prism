@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str = ""  # whsec_...
     stripe_price_id: str = ""  # price_... ($7/mo recurring)
     grace_period_days: int = 7  # days before downgrade after payment failure
+    frontend_url: str = "http://localhost:3000"  # base URL for redirect targets
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
