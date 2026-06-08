@@ -1,55 +1,91 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import MomentumArrow from "@/components/dashboard/MomentumArrow";
+import MomentumArrow, {
+  getMomentumDirection,
+  getMomentumColor,
+} from "@/components/perception/MomentumArrow";
+
+describe("getMomentumDirection", () => {
+  it("returns rising for positive momentum", () => {
+    expect(getMomentumDirection(0.15)).toBe("rising");
+    expect(getMomentumDirection(0.02)).toBe("rising");
+  });
+
+  it("returns falling for negative momentum", () => {
+    expect(getMomentumDirection(-0.15)).toBe("falling");
+    expect(getMomentumDirection(-0.02)).toBe("falling");
+  });
+
+  it("returns stable for near-zero momentum", () => {
+    expect(getMomentumDirection(0)).toBe("stable");
+    expect(getMomentumDirection(0.005)).toBe("stable");
+    expect(getMomentumDirection(-0.005)).toBe("stable");
+    expect(getMomentumDirection(0.01)).toBe("stable");
+    expect(getMomentumDirection(-0.01)).toBe("stable");
+  });
+
+  it("boundary: 0.01 is stable, 0.011 is rising", () => {
+    expect(getMomentumDirection(0.01)).toBe("stable");
+    expect(getMomentumDirection(0.011)).toBe("rising");
+  });
+
+  it("boundary: -0.01 is stable, -0.011 is falling", () => {
+    expect(getMomentumDirection(-0.01)).toBe("stable");
+    expect(getMomentumDirection(-0.011)).toBe("falling");
+  });
+});
+
+describe("getMomentumColor", () => {
+  it("returns green for rising", () => {
+    expect(getMomentumColor("rising")).toBe("text-green-600");
+  });
+
+  it("returns red for falling", () => {
+    expect(getMomentumColor("falling")).toBe("text-red-500");
+  });
+
+  it("returns gray for stable", () => {
+    expect(getMomentumColor("stable")).toBe("text-gray-400");
+  });
+});
 
 describe("MomentumArrow", () => {
-  it("shows rising arrow for positive momentum", () => {
-    render(<MomentumArrow momentum={0.5} />);
-    expect(screen.getByLabelText("rising")).toHaveTextContent("\u25B2");
+  it("renders up arrow for positive momentum", () => {
+    render(<MomentumArrow value={0.15} />);
+    const el = screen.getByTestId("momentum-arrow");
+    expect(el).toHaveTextContent("\u2191");
+    expect(el.className).toContain("text-green-600");
   });
 
-  it("shows falling arrow for negative momentum", () => {
-    render(<MomentumArrow momentum={-0.3} />);
-    expect(screen.getByLabelText("falling")).toHaveTextContent("\u25BC");
+  it("renders down arrow for negative momentum", () => {
+    render(<MomentumArrow value={-0.12} />);
+    const el = screen.getByTestId("momentum-arrow");
+    expect(el).toHaveTextContent("\u2193");
+    expect(el.className).toContain("text-red-500");
   });
 
-  it("shows flat indicator for near-zero momentum", () => {
-    render(<MomentumArrow momentum={0.05} />);
-    expect(screen.getByLabelText("flat")).toHaveTextContent("\u2500");
+  it("renders right arrow for stable momentum", () => {
+    render(<MomentumArrow value={0.005} />);
+    const el = screen.getByTestId("momentum-arrow");
+    expect(el).toHaveTextContent("\u2192");
+    expect(el.className).toContain("text-gray-400");
   });
 
-  it("shows flat for exactly zero", () => {
-    render(<MomentumArrow momentum={0} />);
-    expect(screen.getByLabelText("flat")).toBeInTheDocument();
+  it("shows momentum value in title", () => {
+    render(<MomentumArrow value={0.15} />);
+    const el = screen.getByTestId("momentum-arrow");
+    expect(el).toHaveAttribute("title", "Momentum: +0.15");
   });
 
-  it("shows flat for negative near-zero", () => {
-    render(<MomentumArrow momentum={-0.09} />);
-    expect(screen.getByLabelText("flat")).toBeInTheDocument();
+  it("shows negative value in title", () => {
+    render(<MomentumArrow value={-0.05} />);
+    const el = screen.getByTestId("momentum-arrow");
+    expect(el).toHaveAttribute("title", "Momentum: -0.05");
   });
 
-  it("uses green color for rising", () => {
-    render(<MomentumArrow momentum={0.2} />);
-    expect(screen.getByLabelText("rising").className).toContain("green");
-  });
-
-  it("uses red color for falling", () => {
-    render(<MomentumArrow momentum={-0.2} />);
-    expect(screen.getByLabelText("falling").className).toContain("red");
-  });
-
-  it("uses gray color for flat", () => {
-    render(<MomentumArrow momentum={0} />);
-    expect(screen.getByLabelText("flat").className).toContain("gray");
-  });
-
-  it("treats threshold 0.1 as rising", () => {
-    render(<MomentumArrow momentum={0.1} />);
-    expect(screen.getByLabelText("rising")).toBeInTheDocument();
-  });
-
-  it("treats threshold -0.1 as falling", () => {
-    render(<MomentumArrow momentum={-0.1} />);
-    expect(screen.getByLabelText("falling")).toBeInTheDocument();
+  it("shows zero value in title with + prefix", () => {
+    render(<MomentumArrow value={0} />);
+    const el = screen.getByTestId("momentum-arrow");
+    expect(el).toHaveAttribute("title", "Momentum: +0.00");
   });
 });
