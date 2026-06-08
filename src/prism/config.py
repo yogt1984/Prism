@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     tts_chunk_size: int = 4000  # chars per API call (OpenAI limit: 4096)
     audio_storage_dir: str = "data/audio"  # directory for MP3 files
 
+    # Source auto-discovery
+    source_candidate_max_per_cycle: int = 5
+    source_probation_days: int = 14
+    source_promotion_min_articles: int = 10
+    source_promotion_min_ratio: float = 0.7
+    source_demotion_consecutive_failures: int = 5
+    source_rss_detect_timeout: float = 5.0
+
     # Monitoring
     ntfy_topic: str = ""  # ntfy.sh topic for push alerts (empty = disabled)
 

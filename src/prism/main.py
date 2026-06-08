@@ -70,6 +70,25 @@ def briefing_cycle(engine: Engine | None = None) -> None:
         send_alert(f"Briefing cycle failed: {exc}", level=AlertLevel.ERROR)
 
 
+def source_evaluation(engine: Engine | None = None) -> None:
+    try:
+        from prism.agents.source_lifecycle import (
+            check_trusted_demotion,
+            evaluate_probation_sources,
+        )
+
+        e = engine or get_engine()
+        results = evaluate_probation_sources(e)
+        demoted = check_trusted_demotion(e)
+        logger.info(
+            "Source evaluation: promoted=%d, rejected=%d, reset=%d, demoted=%d",
+            results["promoted"], results["rejected"], results["reset"], demoted,
+        )
+    except Exception as exc:
+        logger.exception("Source evaluation failed")
+        send_alert(f"Source evaluation failed: {exc}", level=AlertLevel.ERROR)
+
+
 def grace_period_check(engine: Engine | None = None) -> None:
     try:
         from prism.subscription import expire_grace_periods
@@ -118,6 +137,14 @@ def build_scheduler() -> BlockingScheduler:
         month=cron_parts[3] if len(cron_parts) > 3 else "*",
         day_of_week=cron_parts[4] if len(cron_parts) > 4 else "*",
         id="briefing",
+    )
+
+    scheduler.add_job(
+        source_evaluation,
+        "cron",
+        hour="0",
+        minute="30",
+        id="source_evaluation",
     )
 
     scheduler.add_job(

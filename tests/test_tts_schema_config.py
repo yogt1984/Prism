@@ -332,7 +332,7 @@ def test_alembic_head_is_008(tmp_path):
     engine = sa_create_engine(url)
     with engine.connect() as conn:
         rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-    assert rev == "008"
+    assert rev == "009"
 
 
 def test_alembic_008_adds_audio_columns(tmp_path):

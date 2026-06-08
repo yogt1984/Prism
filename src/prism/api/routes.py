@@ -23,6 +23,7 @@ from prism.models import (
     PerceptionSnapshot,
     Perspective,
     Source,
+    SourceStatus,
     StoryCluster,
     StoryStatus,
     TopicResonance,
@@ -132,8 +133,21 @@ class SourceOut(BaseModel):
     categories: str
     active: bool
     created_at: datetime
+    # Lifecycle fields
+    status: str = "candidate"
+    discovered_via: str = ""
+    sighting_count: int = 0
+    articles_validated: int = 0
+    articles_failed: int = 0
+    probation_start: datetime | None = None
+    last_evaluated: datetime | None = None
+    rejection_reason: str = ""
 
     model_config = {"from_attributes": True}
+
+
+class RejectBody(BaseModel):
+    reason: str
 
 
 class ArticleOut(BaseModel):
@@ -418,6 +432,80 @@ def list_sources(
     stmt = stmt.order_by(col(Source.trust_score).desc())
     rows = session.exec(stmt).all()
     return [SourceOut.model_validate(r) for r in rows]
+
+
+@router.get("/sources/candidates", response_model=list[SourceOut])
+def list_candidate_sources(
+    limit: Annotated[int, Query(ge=1, le=100, description="Max results")] = 20,
+    session: Session = Depends(_get_session),
+) -> list[SourceOut]:
+    """List candidate sources ordered by sighting count."""
+    rows = session.exec(
+        select(Source)
+        .where(Source.status == SourceStatus.CANDIDATE)
+        .order_by(col(Source.sighting_count).desc())
+        .limit(limit)
+    ).all()
+    return [SourceOut.model_validate(r) for r in rows]
+
+
+@router.get("/sources/probation", response_model=list[SourceOut])
+def list_probation_sources(
+    session: Session = Depends(_get_session),
+) -> list[SourceOut]:
+    """List sources currently in probation with validation stats."""
+    rows = session.exec(
+        select(Source).where(Source.status == SourceStatus.PROBATION)
+    ).all()
+    return [SourceOut.model_validate(r) for r in rows]
+
+
+@router.post("/sources/{source_id}/promote", response_model=SourceOut)
+def promote_source(
+    source_id: int,
+    user: User = Depends(require_api_key),
+    session: Session = Depends(_get_session),
+) -> SourceOut:
+    """Manually promote a source to trusted (admin)."""
+    source = session.get(Source, source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+    if source.status == SourceStatus.SEED:
+        raise HTTPException(status_code=409, detail="Seed sources cannot be promoted")
+
+    from datetime import UTC
+    source.status = SourceStatus.TRUSTED
+    source.trust_score = 0.5
+    source.active = True
+    source.last_evaluated = datetime.now(UTC)
+    session.commit()
+    session.refresh(source)
+    return SourceOut.model_validate(source)
+
+
+@router.post("/sources/{source_id}/reject", response_model=SourceOut)
+def reject_source(
+    source_id: int,
+    body: RejectBody,
+    user: User = Depends(require_api_key),
+    session: Session = Depends(_get_session),
+) -> SourceOut:
+    """Manually reject a source (admin)."""
+    source = session.get(Source, source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+    if source.status == SourceStatus.SEED:
+        raise HTTPException(status_code=409, detail="Seed sources cannot be rejected")
+
+    from datetime import UTC
+    source.status = SourceStatus.REJECTED
+    source.active = False
+    source.trust_score = 0.0
+    source.rejection_reason = body.reason
+    source.last_evaluated = datetime.now(UTC)
+    session.commit()
+    session.refresh(source)
+    return SourceOut.model_validate(source)
 
 
 # ── Stories ───────────────────────────────────────────────────────────

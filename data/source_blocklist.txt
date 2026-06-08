@@ -1,0 +1,29 @@
+# Domains excluded from auto-discovery (one per line)
+# Social media and user-generated content
+reddit.com
+twitter.com
+x.com
+facebook.com
+instagram.com
+youtube.com
+tiktok.com
+linkedin.com
+threads.net
+
+# Blog platforms (too heterogeneous for source-level trust)
+medium.com
+substack.com
+wordpress.com
+blogspot.com
+tumblr.com
+
+# Reference / not news
+wikipedia.org
+wikimedia.org
+
+# Aggregators (would create circular discovery)
+news.google.com
+news.bing.com
+news.yahoo.com
+flipboard.com
+apple.news

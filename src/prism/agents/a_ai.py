@@ -278,6 +278,15 @@ class AnalysisAgent:
                 len(result.get("perspectives", [])),
             )
 
+            # Cross-validate probation sources (failure must not block analysis)
+            try:
+                from prism.agents.source_lifecycle import cross_validate_cluster
+                cross_validate_cluster(cluster_id, e)
+            except Exception:
+                logger.exception(
+                    "Cross-validation failed for cluster %d", cluster_id,
+                )
+
             # Compute resonance (failure must not block analysis)
             try:
                 self._update_resonance(session, cluster, articles, trust_map)

@@ -7,4 +7,5 @@ build/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
-data/
+data/*
+!data/source_blocklist.txt

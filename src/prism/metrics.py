@@ -165,6 +165,10 @@ tts_generated_total = Counter("tts_generated_total")
 tts_failed_total = Counter("tts_failed_total")
 tts_duration_seconds = Histogram("tts_duration_seconds")
 tts_chars_processed_total = Counter("tts_chars_processed_total")
+source_candidates_discovered_total = Counter("source_candidates_discovered_total")
+source_promoted_total = Counter("source_promoted_total")
+source_rejected_total = Counter("source_rejected_total")
+source_demoted_total = Counter("source_demoted_total")
 
 _timed_logger = logging.getLogger("prism.metrics")
 
