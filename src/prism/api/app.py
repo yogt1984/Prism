@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from prism.api.rate_limit import RateLimitMiddleware
 from prism.api.routes import router
+from prism.api.stripe_webhook import router as stripe_router
 
 
 def create_app() -> FastAPI:
@@ -22,4 +23,5 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(RateLimitMiddleware)
     app.include_router(router)
+    app.include_router(stripe_router)
     return app
