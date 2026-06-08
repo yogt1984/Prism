@@ -1,14 +1,17 @@
 """Prism API routes — health, config, sources, stories, users, and engagements."""
 
 import hashlib
+import re as _re
 import secrets
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import BaseModel, EmailStr, model_validator
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Security
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Security
+from fastapi.responses import Response, StreamingResponse
 from fastapi.security import APIKeyHeader
 from sqlmodel import Session, col, select
 
@@ -796,6 +799,125 @@ def trigger_briefing(
         )
 
     return BriefingDetailOut.model_validate(briefing)
+
+
+# ── Audio Streaming ───────────────────────────────────────────────────
+
+
+def _serve_full(
+    audio_file: Path,
+    file_size: int,
+    briefing_id: int,
+) -> StreamingResponse:
+    """Serve the complete MP3 file."""
+
+    def file_iterator():  # type: ignore[no-untyped-def]
+        with open(audio_file, "rb") as f:
+            while chunk := f.read(65536):  # 64KB chunks
+                yield chunk
+
+    return StreamingResponse(
+        content=file_iterator(),
+        media_type="audio/mpeg",
+        headers={
+            "Content-Length": str(file_size),
+            "Accept-Ranges": "bytes",
+            "Content-Disposition": f'inline; filename="briefing-{briefing_id}.mp3"',
+            "Cache-Control": "private, max-age=86400",
+        },
+    )
+
+
+def _serve_range(
+    audio_file: Path,
+    file_size: int,
+    range_header: str,
+    briefing_id: int,
+) -> Response:
+    """Serve a byte range of the MP3 file (HTTP 206)."""
+    match = _re.match(r"bytes=(\d+)-(\d*)", range_header)
+    if not match:
+        raise HTTPException(
+            status_code=416, detail="Requested range not satisfiable"
+        )
+
+    start = int(match.group(1))
+    end = int(match.group(2)) if match.group(2) else file_size - 1
+
+    if start >= file_size or end >= file_size or start > end:
+        raise HTTPException(
+            status_code=416,
+            detail="Requested range not satisfiable",
+            headers={"Content-Range": f"bytes */{file_size}"},
+        )
+
+    content_length = end - start + 1
+
+    def range_iterator():  # type: ignore[no-untyped-def]
+        with open(audio_file, "rb") as f:
+            f.seek(start)
+            remaining = content_length
+            while remaining > 0:
+                chunk_size = min(65536, remaining)
+                data = f.read(chunk_size)
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    return StreamingResponse(
+        content=range_iterator(),
+        status_code=206,
+        media_type="audio/mpeg",
+        headers={
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Content-Length": str(content_length),
+            "Accept-Ranges": "bytes",
+            "Content-Disposition": f'inline; filename="briefing-{briefing_id}.mp3"',
+            "Cache-Control": "private, max-age=86400",
+        },
+    )
+
+
+@router.get("/users/{user_id}/briefings/{briefing_id}/audio")
+def stream_audio(
+    user_id: int,
+    briefing_id: int,
+    request: Request,
+    auth_user: User = Depends(require_api_key),
+    session: Session = Depends(_get_session),
+) -> Response:
+    """Stream the audio MP3 for a briefing."""
+    if auth_user.id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: you can only access your own resources",
+        )
+
+    briefing = session.get(Briefing, briefing_id)
+    if briefing is None or briefing.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Briefing not found")
+
+    if not briefing.audio_path:
+        raise HTTPException(
+            status_code=404, detail="Audio not available for this briefing"
+        )
+
+    from prism.config import get_settings
+
+    audio_file = Path(get_settings().audio_storage_dir) / f"{briefing.id}.mp3"
+
+    if not audio_file.exists():
+        raise HTTPException(
+            status_code=404, detail="Audio file missing from storage"
+        )
+
+    file_size = audio_file.stat().st_size
+
+    range_header = request.headers.get("range")
+    if range_header:
+        return _serve_range(audio_file, file_size, range_header, briefing.id)
+    return _serve_full(audio_file, file_size, briefing.id)
 
 
 # ── Engagements ───────────────────────────────────────────────────────
