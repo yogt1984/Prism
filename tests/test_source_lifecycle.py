@@ -8,6 +8,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine as sa_create_engine, inspect as sa_inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from prism.agents.source_lifecycle import promote_to_probation
 from prism.models import Source, SourceStatus
 
 
@@ -273,3 +274,108 @@ def test_migration_009_downgrade(tmp_path):
     assert "name" in cols
     assert "url" in cols
     assert "trust_score" in cols
+
+
+# ── Probation promotion (06_03) ────────────────────────────────────
+
+
+def test_promote_to_probation(tmp_path):
+    """Candidate with 3 sightings is promoted."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        session.add(Source(
+            name="Test", url="test.com",
+            status=SourceStatus.CANDIDATE, sighting_count=3,
+        ))
+        session.commit()
+
+    count = promote_to_probation(engine)
+    assert count == 1
+
+    with Session(engine) as session:
+        src = session.exec(select(Source).where(Source.url == "test.com")).first()
+        assert src.status == SourceStatus.PROBATION
+        assert src.active is True
+        assert src.trust_score == pytest.approx(0.1)
+        assert src.probation_start is not None
+
+
+def test_promote_skips_low_sighting(tmp_path):
+    """Candidate with <3 sightings not promoted."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        session.add(Source(
+            name="Low", url="low.com",
+            status=SourceStatus.CANDIDATE, sighting_count=2,
+        ))
+        session.commit()
+
+    count = promote_to_probation(engine)
+    assert count == 0
+
+    with Session(engine) as session:
+        src = session.exec(select(Source).where(Source.url == "low.com")).first()
+        assert src.status == SourceStatus.CANDIDATE
+
+
+def test_promote_skips_non_candidate(tmp_path):
+    """Already-probation or seed sources not re-promoted."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        session.add(Source(
+            name="Seed", url="seed.com",
+            status=SourceStatus.SEED, sighting_count=10,
+        ))
+        session.add(Source(
+            name="Prob", url="prob.com",
+            status=SourceStatus.PROBATION, sighting_count=5,
+        ))
+        session.commit()
+
+    count = promote_to_probation(engine)
+    assert count == 0
+
+
+def test_promote_multiple_candidates(tmp_path):
+    """Multiple candidates promoted in one call."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        for i in range(3):
+            session.add(Source(
+                name=f"Site{i}", url=f"site{i}.com",
+                status=SourceStatus.CANDIDATE, sighting_count=3 + i,
+            ))
+        session.commit()
+
+    count = promote_to_probation(engine)
+    assert count == 3
+
+    with Session(engine) as session:
+        all_prob = session.exec(
+            select(Source).where(Source.status == SourceStatus.PROBATION)
+        ).all()
+        assert len(all_prob) == 3
+
+
+def test_promote_idempotent(tmp_path):
+    """Running promote twice doesn't re-promote or error."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        session.add(Source(
+            name="Test", url="test.com",
+            status=SourceStatus.CANDIDATE, sighting_count=3,
+        ))
+        session.commit()
+
+    assert promote_to_probation(engine) == 1
+    assert promote_to_probation(engine) == 0  # already probation

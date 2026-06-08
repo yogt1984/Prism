@@ -22,6 +22,8 @@ from prism.config import settings
 from prism.db import get_engine, get_session
 from prism.metrics import discovery_brave_skip_total, timed_cycle
 from prism.agents.blocklist import is_blocked
+from prism.agents.rss_detect import detect_rss_feed
+from prism.agents.source_lifecycle import promote_to_probation
 from prism.models import Article, Source, SourceStatus, StoryCluster, StoryStatus
 from prism.retry import retry_on_transient
 
@@ -389,7 +391,9 @@ class DiscoveryAgent:
 
         # Extract candidate sources from Brave results
         brave_articles = [a for a in all_articles if a not in rss_articles]
+        e = engine or get_engine()
         self._extract_candidates(brave_articles, engine)
+        promote_to_probation(e)
 
         if not all_articles:
             send_alert(
@@ -471,6 +475,12 @@ class DiscoveryAgent:
                 session.add(source)
                 existing_urls.add(domain)
                 created += 1
+
+                # Best-effort RSS detection
+                rss_url = detect_rss_feed(domain)
+                if rss_url:
+                    source.rss_url = rss_url
+                    logger.info("RSS feed found for %s: %s", domain, rss_url)
 
             session.commit()
 

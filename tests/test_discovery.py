@@ -1043,3 +1043,37 @@ def test_run_discovery_calls_extract_candidates(agent, db_engine, _blocklist):
     call_args = agent._extract_candidates.call_args
     brave_results = call_args[0][0]
     assert len(brave_results) >= 1
+
+
+def test_extract_candidates_calls_rss_detect(agent, db_engine, _blocklist):
+    """RSS detection is called for each new candidate."""
+    results = [{"url": "https://newsite.com/a", "title": "x"}]
+    with patch("prism.agents.d_ai.detect_rss_feed", return_value="https://newsite.com/feed") as mock_rss:
+        agent._extract_candidates(results, db_engine)
+        mock_rss.assert_called_once_with("newsite.com")
+
+    with Session(db_engine) as session:
+        src = session.exec(select(Source).where(Source.url == "newsite.com")).first()
+        assert src.rss_url == "https://newsite.com/feed"
+
+
+def test_extract_candidates_rss_none_ok(agent, db_engine, _blocklist):
+    """Candidate still created when RSS detection returns None."""
+    results = [{"url": "https://nofeed.com/a", "title": "x"}]
+    with patch("prism.agents.d_ai.detect_rss_feed", return_value=None):
+        agent._extract_candidates(results, db_engine)
+
+    with Session(db_engine) as session:
+        src = session.exec(select(Source).where(Source.url == "nofeed.com")).first()
+        assert src is not None
+        assert src.rss_url == ""
+
+
+def test_run_discovery_calls_promote_to_probation(agent, db_engine, _blocklist):
+    """run_discovery calls promote_to_probation after candidate extraction."""
+    agent.search_brave = MagicMock(return_value=[])
+    agent.fetch_rss_sources = MagicMock(return_value=[])
+
+    with patch("prism.agents.d_ai.promote_to_probation") as mock_promote:
+        agent.run_discovery(queries=["test"], engine=db_engine)
+        mock_promote.assert_called_once()
