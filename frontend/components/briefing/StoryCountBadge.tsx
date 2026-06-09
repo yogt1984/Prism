@@ -1,10 +1,13 @@
+import Badge from "@/components/ui/Badge";
+
 export default function StoryCountBadge({ count }: { count: number }) {
   return (
-    <span
-      className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-violet-100 text-violet-700"
+    <Badge
+      color="bg-violet-100 text-violet-700"
+      className="gap-1"
       data-testid="story-count-badge"
     >
       {count} {count === 1 ? "story" : "stories"}
-    </span>
+    </Badge>
   );
 }

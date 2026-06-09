@@ -1,4 +1,5 @@
 import type { BriefingFormat } from "@/lib/types";
+import Badge from "@/components/ui/Badge";
 
 const FORMAT_LABELS: Record<BriefingFormat, string> = {
   email: "Email",
@@ -8,12 +9,9 @@ const FORMAT_LABELS: Record<BriefingFormat, string> = {
 
 export default function FormatBadge({ format }: { format: BriefingFormat }) {
   return (
-    <span
-      className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-blue-100 text-blue-700"
-      data-testid="format-badge"
-    >
+    <Badge color="bg-blue-100 text-blue-700" data-testid="format-badge">
       {FORMAT_LABELS[format] ?? format}
-    </span>
+    </Badge>
   );
 }
 

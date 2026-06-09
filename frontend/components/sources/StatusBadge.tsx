@@ -1,4 +1,5 @@
 import type { SourceStatus } from "@/lib/types";
+import Badge from "@/components/ui/Badge";
 
 const STATUS_STYLES: Record<SourceStatus, { color: string; text: string }> = {
   seed: { color: "bg-gray-200 text-gray-700", text: "Seed" },
@@ -11,12 +12,9 @@ const STATUS_STYLES: Record<SourceStatus, { color: string; text: string }> = {
 export default function StatusBadge({ status }: { status: SourceStatus }) {
   const { color, text } = STATUS_STYLES[status] ?? STATUS_STYLES.candidate;
   return (
-    <span
-      className={`inline-block px-2 py-0.5 text-xs font-medium rounded-full ${color}`}
-      data-testid="status-badge"
-    >
+    <Badge color={color} data-testid="status-badge">
       {text}
-    </span>
+    </Badge>
   );
 }
 

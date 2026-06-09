@@ -1,3 +1,5 @@
+import Badge from "@/components/ui/Badge";
+
 interface ResonanceBadgeProps {
   score: number;
   momentum?: number;
@@ -26,12 +28,9 @@ export default function ResonanceBadge({
   const arrow = getMomentumArrow(momentum);
 
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${color}`}
-      data-testid="resonance-badge"
-    >
+    <Badge color={color} className="gap-1" data-testid="resonance-badge">
       {score.toFixed(1)} {label} {arrow}
-    </span>
+    </Badge>
   );
 }
 

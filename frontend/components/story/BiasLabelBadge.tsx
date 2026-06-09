@@ -1,4 +1,5 @@
 import type { BiasLabel } from "@/lib/types";
+import Badge from "@/components/ui/Badge";
 
 const BIAS_STYLES: Record<BiasLabel, { color: string; text: string }> = {
   left: { color: "bg-blue-600 text-white", text: "Left" },
@@ -12,12 +13,9 @@ const BIAS_STYLES: Record<BiasLabel, { color: string; text: string }> = {
 export default function BiasLabelBadge({ label }: { label: BiasLabel }) {
   const { color, text } = BIAS_STYLES[label] ?? BIAS_STYLES.unknown;
   return (
-    <span
-      className={`inline-block px-2 py-0.5 text-xs font-medium rounded-full ${color}`}
-      data-testid="bias-label"
-    >
+    <Badge color={color} data-testid="bias-label">
       {text}
-    </span>
+    </Badge>
   );
 }
 

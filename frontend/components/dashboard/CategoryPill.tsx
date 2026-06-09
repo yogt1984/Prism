@@ -1,3 +1,5 @@
+import Badge from "@/components/ui/Badge";
+
 const CATEGORY_COLORS: Record<string, string> = {
   finance: "bg-emerald-100 text-emerald-700",
   politics: "bg-red-100 text-red-700",
@@ -12,11 +14,9 @@ const CATEGORY_COLORS: Record<string, string> = {
 export default function CategoryPill({ category }: { category: string }) {
   const color = CATEGORY_COLORS[category] ?? "bg-gray-100 text-gray-600";
   return (
-    <span
-      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize ${color}`}
-    >
+    <Badge color={color} className="capitalize">
       {category}
-    </span>
+    </Badge>
   );
 }
 
