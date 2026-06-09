@@ -1,5 +1,7 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 interface GracePeriodWarningProps {
   proUntil: string;
   onUpdatePayment: () => void;
@@ -42,14 +44,15 @@ export default function GracePeriodWarning({
         There&apos;s an issue with your payment. Pro access continues until{" "}
         <strong>{formatGraceDate(proUntil)}</strong>.
       </p>
-      <button
+      <Button
+        variant="danger"
         onClick={onUpdatePayment}
         disabled={isLoading}
-        className="px-4 py-2 text-sm font-medium rounded-md bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 whitespace-nowrap"
+        className="whitespace-nowrap"
         data-testid="update-payment-btn"
       >
         Update Payment Method
-      </button>
+      </Button>
     </div>
   );
 }

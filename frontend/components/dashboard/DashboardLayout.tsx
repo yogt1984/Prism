@@ -12,7 +12,7 @@ export default function DashboardLayout({
   isTriggerPending,
 }: DashboardLayoutProps) {
   return (
-    <div className="flex h-screen">
+    <div className="flex h-[calc(100dvh-4rem)] lg:h-screen">
       <Sidebar
         onTriggerBriefing={onTriggerBriefing}
         isTriggerPending={isTriggerPending}

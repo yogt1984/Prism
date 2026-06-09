@@ -1,5 +1,8 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
+
 const FEATURES = [
   "All 8 topic categories",
   "Up to 25 stories per briefing",
@@ -15,8 +18,8 @@ interface UpgradeCardProps {
 
 export default function UpgradeCard({ onUpgrade, isLoading }: UpgradeCardProps) {
   return (
-    <div
-      className="rounded-lg border border-violet-200 bg-violet-50 p-6"
+    <Card
+      variant="alert"
       data-testid="upgrade-card"
     >
       <h3 className="text-lg font-semibold mb-1">Upgrade to Pro</h3>
@@ -39,15 +42,15 @@ export default function UpgradeCard({ onUpgrade, isLoading }: UpgradeCardProps) 
           </li>
         ))}
       </ul>
-      <button
+      <Button
         onClick={onUpgrade}
         disabled={isLoading}
-        className="w-full px-4 py-2 text-sm font-medium rounded-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        fullWidth
         data-testid="upgrade-btn"
       >
         {isLoading ? "Redirecting to payment..." : "Upgrade Now"}
-      </button>
-    </div>
+      </Button>
+    </Card>
   );
 }
 

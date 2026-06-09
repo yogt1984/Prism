@@ -2,6 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import KeywordSidebar from "./KeywordSidebar";
+import Button from "@/components/ui/Button";
 
 interface SidebarProps {
   onTriggerBriefing?: () => void;
@@ -33,13 +34,13 @@ export default function Sidebar({
       <KeywordSidebar />
 
       <div className="mt-auto space-y-2">
-        <button
+        <Button
           onClick={onTriggerBriefing}
           disabled={isTriggerPending}
-          className="w-full rounded-md bg-violet-600 px-3 py-2 text-sm text-white font-medium hover:bg-violet-700 disabled:opacity-50"
+          fullWidth
         >
           {isTriggerPending ? "Generating..." : "Generate briefing"}
-        </button>
+        </Button>
       </div>
     </aside>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import Button from "@/components/ui/Button";
 
 const RATE_GUARD_MS = 60_000;
 const STORAGE_KEY = "prism:last-briefing-trigger";
@@ -41,10 +42,10 @@ export default function TriggerBriefingButton({
   const disabled = isPending || cooldown;
 
   return (
-    <button
+    <Button
       onClick={handleClick}
       disabled={disabled}
-      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
+      className="inline-flex items-center gap-2"
       data-testid="trigger-briefing-btn"
     >
       {isPending && (
@@ -70,7 +71,7 @@ export default function TriggerBriefingButton({
         </svg>
       )}
       {isPending ? "Generating..." : "Generate new briefing"}
-    </button>
+    </Button>
   );
 }
 

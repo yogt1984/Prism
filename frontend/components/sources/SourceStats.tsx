@@ -1,6 +1,7 @@
 import type { Source, SourceStatus } from "@/lib/types";
 import BiasDistributionChart from "./BiasDistributionChart";
 import StatusBadge from "./StatusBadge";
+import Card from "@/components/ui/Card";
 
 interface SourceStatsProps {
   sources: Source[];
@@ -49,32 +50,32 @@ export default function SourceStats({ sources }: SourceStatsProps) {
       className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
       data-testid="source-stats"
     >
-      <div className="rounded-lg border border-gray-200 p-4" data-testid="stat-avg-trust">
+      <Card data-testid="stat-avg-trust">
         <p className="text-xs text-gray-500 uppercase tracking-wide">
           Average Trust
         </p>
         <p className="mt-1 text-2xl font-semibold text-gray-900">
           {avgTrust.toFixed(2)}
         </p>
-      </div>
+      </Card>
 
-      <div className="rounded-lg border border-gray-200 p-4" data-testid="stat-bias-distribution">
+      <Card data-testid="stat-bias-distribution">
         <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
           Bias Distribution
         </p>
         <BiasDistributionChart distribution={biasDistribution} />
-      </div>
+      </Card>
 
-      <div className="rounded-lg border border-gray-200 p-4" data-testid="stat-total-sources">
+      <Card data-testid="stat-total-sources">
         <p className="text-xs text-gray-500 uppercase tracking-wide">
           Total Sources
         </p>
         <p className="mt-1 text-2xl font-semibold text-gray-900">
           {sources.length}
         </p>
-      </div>
+      </Card>
 
-      <div className="rounded-lg border border-gray-200 p-4" data-testid="stat-status-breakdown">
+      <Card data-testid="stat-status-breakdown">
         <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
           Lifecycle Breakdown
         </p>
@@ -88,7 +89,7 @@ export default function SourceStats({ sources }: SourceStatsProps) {
             </li>
           ))}
         </ul>
-      </div>
+      </Card>
     </div>
   );
 }
