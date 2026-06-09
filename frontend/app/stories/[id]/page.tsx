@@ -30,6 +30,8 @@ export default function StoryDetailPage() {
   const engagement = useRecordEngagement();
 
   const openRecorded = useRef(false);
+  const engagedExplicitly = useRef(false);
+  const mountTime = useRef(Date.now());
 
   useEffect(() => {
     if (userId && storyId && !openRecorded.current) {
@@ -41,6 +43,21 @@ export default function StoryDetailPage() {
         read_time_sec: 0,
       });
     }
+  }, [userId, storyId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Record 'read' with accumulated time on unmount (only if user didn't save/skip)
+  useEffect(() => {
+    return () => {
+      if (!userId || !storyId || engagedExplicitly.current) return;
+      const sec = Math.floor((Date.now() - mountTime.current) / 1000);
+      if (sec < 2) return;
+      engagement.mutate({
+        user_id: userId,
+        cluster_id: storyId,
+        action: "read",
+        read_time_sec: sec,
+      });
+    };
   }, [userId, storyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isLoading) {
@@ -68,6 +85,7 @@ export default function StoryDetailPage() {
 
   const handleEngage = (action: "save" | "skip", readTimeSec: number) => {
     if (!userId || !storyId) return;
+    engagedExplicitly.current = true;
     engagement.mutate({
       user_id: userId,
       cluster_id: storyId,

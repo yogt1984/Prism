@@ -2,11 +2,12 @@
 
 import { useParams } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { useEffect, useRef } from "react";
 import ReaderHeader from "@/components/briefing/ReaderHeader";
 import HTMLRenderer from "@/components/briefing/HTMLRenderer";
 import PlainTextRenderer from "@/components/briefing/PlainTextRenderer";
 import BriefingNav from "@/components/briefing/BriefingNav";
-import { useBriefingDetailById, useBriefingList } from "@/lib/hooks";
+import { useBriefingDetailById, useBriefingList, useRecordEngagement } from "@/lib/hooks";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Briefing } from "@/lib/types";
 
@@ -22,6 +23,37 @@ export default function BriefingReaderPage() {
     userId,
     briefingId,
   );
+  const engagement = useRecordEngagement();
+
+  // Record 'open' once on mount
+  const openRecorded = useRef(false);
+  useEffect(() => {
+    if (userId && briefingId && !openRecorded.current) {
+      openRecorded.current = true;
+      engagement.mutate({
+        user_id: userId,
+        cluster_id: briefingId,
+        action: "open",
+        read_time_sec: 0,
+      });
+    }
+  }, [userId, briefingId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Record 'read' with accumulated time on unmount
+  const mountTime = useRef(Date.now());
+  useEffect(() => {
+    return () => {
+      if (!userId || !briefingId) return;
+      const sec = Math.floor((Date.now() - mountTime.current) / 1000);
+      if (sec < 2) return; // ignore bounces
+      engagement.mutate({
+        user_id: userId,
+        cluster_id: briefingId,
+        action: "read",
+        read_time_sec: sec,
+      });
+    };
+  }, [userId, briefingId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Derive prev/next from cached list
   const cachedList = queryClient.getQueryData<Briefing[]>([

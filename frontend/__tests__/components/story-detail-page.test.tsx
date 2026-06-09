@@ -221,6 +221,86 @@ describe("StoryDetailPage", () => {
     });
   });
 
+  it("records read on unmount when no explicit engagement", async () => {
+    const realDateNow = Date.now;
+    const startTime = realDateNow();
+
+    let callCount = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => {
+      callCount++;
+      return callCount <= 2 ? startTime : startTime + 5000;
+    });
+
+    const { unmount } = render(<StoryDetailPage />, {
+      wrapper: createWrapper(),
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("story-detail")).toBeInTheDocument();
+    });
+
+    const callsBefore = mockFetch.mock.calls.length;
+    unmount();
+
+    await waitFor(() => {
+      const newCalls = mockFetch.mock.calls.slice(callsBefore);
+      const readCalls = newCalls.filter(
+        ([url, init]) =>
+          typeof url === "string" &&
+          url.includes("/engagements") &&
+          init &&
+          typeof init === "object" &&
+          "body" in init &&
+          typeof init.body === "string" &&
+          init.body.includes('"read"'),
+      );
+      expect(readCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    vi.spyOn(Date, "now").mockRestore();
+  });
+
+  it("does not record read on unmount after save", async () => {
+    render(<StoryDetailPage />, { wrapper: createWrapper() });
+    await waitFor(() => {
+      expect(screen.getByTestId("engagement-bar")).toBeInTheDocument();
+    });
+
+    // Click save (marks engagedExplicitly)
+    fireEvent.click(screen.getByTestId("save-btn"));
+    await waitFor(() => {
+      const engagementCalls = mockFetch.mock.calls.filter(
+        ([url]) => typeof url === "string" && url.includes("/engagements"),
+      );
+      expect(engagementCalls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    const callsBefore = mockFetch.mock.calls.length;
+
+    // Advance time then unmount
+    const startTime = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(startTime + 10000);
+    const { unmount } = render(<StoryDetailPage />, {
+      wrapper: createWrapper(),
+    });
+    unmount();
+
+    // No new "read" engagement should fire
+    const newCalls = mockFetch.mock.calls.slice(callsBefore);
+    const readCalls = newCalls.filter(
+      ([url, init]) =>
+        typeof url === "string" &&
+        url.includes("/engagements") &&
+        init &&
+        typeof init === "object" &&
+        "body" in init &&
+        typeof init.body === "string" &&
+        init.body.includes('"read"'),
+    );
+    expect(readCalls).toHaveLength(0);
+
+    vi.spyOn(Date, "now").mockRestore();
+  });
+
   it("handles unauthenticated user (no open engagement)", async () => {
     mockSession.mockReturnValue({
       data: null,

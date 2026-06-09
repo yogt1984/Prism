@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import BriefingReaderPage from "@/app/briefings/[id]/page";
 import { createWrapper } from "../helpers/query-wrapper";
-import { makeBriefingDetail } from "../helpers/fixtures";
+import { makeBriefingDetail, makeEngagement } from "../helpers/fixtures";
 import type { BriefingDetail } from "@/lib/types";
 
 const mockSession = vi.hoisted(() =>
@@ -61,6 +61,9 @@ describe("BriefingReaderPage", () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes("/users/5/briefings/42")) {
         return Promise.resolve(mockJsonResponse(briefing));
+      }
+      if (url.includes("/engagements")) {
+        return Promise.resolve(mockJsonResponse(makeEngagement(), 201));
       }
       return Promise.resolve(mockJsonResponse({}, 404));
     });
@@ -169,6 +172,82 @@ describe("BriefingReaderPage", () => {
     render(<BriefingReaderPage />, { wrapper: createWrapper() });
     await waitFor(() => {
       expect(screen.getByTestId("story-count-badge")).toBeInTheDocument();
+    });
+  });
+
+  it("records open engagement on mount", async () => {
+    render(<BriefingReaderPage />, { wrapper: createWrapper() });
+    await waitFor(() => {
+      const engagementCalls = mockFetch.mock.calls.filter(
+        ([url]) => typeof url === "string" && url.includes("/engagements"),
+      );
+      expect(engagementCalls.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it("records read engagement on unmount after sufficient time", async () => {
+    const realDateNow = Date.now;
+    const startTime = realDateNow();
+
+    // First call (mount): return real time
+    // Later calls (unmount): advance by 5 seconds
+    let callCount = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => {
+      callCount++;
+      return callCount <= 2 ? startTime : startTime + 5000;
+    });
+
+    const { unmount } = render(<BriefingReaderPage />, {
+      wrapper: createWrapper(),
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("briefing-reader")).toBeInTheDocument();
+    });
+
+    // Clear prior fetch calls to isolate unmount behavior
+    const callsBefore = mockFetch.mock.calls.length;
+    unmount();
+
+    await waitFor(() => {
+      const newCalls = mockFetch.mock.calls.slice(callsBefore);
+      const readCalls = newCalls.filter(
+        ([url, init]) =>
+          typeof url === "string" &&
+          url.includes("/engagements") &&
+          init &&
+          typeof init === "object" &&
+          "body" in init &&
+          typeof init.body === "string" &&
+          init.body.includes('"read"'),
+      );
+      expect(readCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    vi.spyOn(Date, "now").mockRestore();
+  });
+
+  it("does not record engagement when unauthenticated", async () => {
+    mockSession.mockReturnValue({
+      data: null,
+      status: "unauthenticated",
+    });
+
+    render(<BriefingReaderPage />, { wrapper: createWrapper() });
+    // Without userId, briefing query is disabled → shows error state
+    await waitFor(() => {
+      expect(screen.getByTestId("reader-error")).toBeInTheDocument();
+    });
+
+    const engagementCalls = mockFetch.mock.calls.filter(
+      ([url]) => typeof url === "string" && url.includes("/engagements"),
+    );
+    expect(engagementCalls).toHaveLength(0);
+
+    mockSession.mockReturnValue({
+      data: {
+        user: { id: 5, email: "user@test.com", name: "Test User" },
+      },
+      status: "authenticated",
     });
   });
 });
