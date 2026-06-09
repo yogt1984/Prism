@@ -3,7 +3,7 @@
 import { useState, useDeferredValue } from "react";
 import { useSession } from "next-auth/react";
 import { redirect } from "next/navigation";
-import type { BiasLabel, Source } from "@/lib/types";
+import type { BiasLabel, Source, SourceStatus } from "@/lib/types";
 import { useSources } from "@/lib/hooks";
 import FilterChip from "@/components/sources/FilterChip";
 import { SourceTableRow, SourceCard } from "@/components/sources/SourceRow";
@@ -29,10 +29,20 @@ const BIAS_CHIPS: { label: string; value: BiasLabel | null; color?: string }[] =
   { label: "Right", value: "right", color: "bg-red-600" },
 ];
 
+const STATUS_CHIPS: { label: string; value: SourceStatus | null; color?: string }[] = [
+  { label: "All Statuses", value: null },
+  { label: "Seed", value: "seed", color: "bg-gray-400" },
+  { label: "Candidate", value: "candidate", color: "bg-yellow-400" },
+  { label: "Probation", value: "probation", color: "bg-orange-400" },
+  { label: "Trusted", value: "trusted", color: "bg-green-500" },
+  { label: "Rejected", value: "rejected", color: "bg-red-500" },
+];
+
 function filterSources(
   sources: Source[],
   search: string,
   bias: BiasLabel | null,
+  status: SourceStatus | null,
   sortBy: SortMode,
 ): Source[] {
   let filtered = sources;
@@ -48,6 +58,10 @@ function filterSources(
 
   if (bias !== null) {
     filtered = filtered.filter((s) => s.bias_label === bias);
+  }
+
+  if (status !== null) {
+    filtered = filtered.filter((s) => s.status === status);
   }
 
   return [...filtered].sort((a, b) => {
@@ -96,6 +110,7 @@ export default function SourcesPage() {
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [biasFilter, setBiasFilter] = useState<BiasLabel | null>(null);
+  const [statusFilter, setStatusFilter] = useState<SourceStatus | null>(null);
   const [sortBy, setSortBy] = useState<SortMode>("trust_desc");
 
   if (status === "unauthenticated") {
@@ -103,7 +118,7 @@ export default function SourcesPage() {
   }
 
   const allSources = sources ?? [];
-  const filtered = filterSources(allSources, deferredSearch, biasFilter, sortBy);
+  const filtered = filterSources(allSources, deferredSearch, biasFilter, statusFilter, sortBy);
 
   return (
     <main className="max-w-7xl mx-auto px-4 py-8 space-y-6">
@@ -111,11 +126,11 @@ export default function SourcesPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">News Sources</h1>
         <p className="text-gray-500 text-sm mt-1">
-          Every source Prism aggregates from, with trust and bias ratings
+          Every source Prism tracks, with trust, bias, and lifecycle status
         </p>
         {!isLoading && !isError && (
           <p className="text-sm text-gray-400 mt-1" data-testid="source-count">
-            {allSources.length} active source{allSources.length !== 1 ? "s" : ""}
+            {allSources.length} source{allSources.length !== 1 ? "s" : ""}
           </p>
         )}
       </div>
@@ -172,6 +187,17 @@ export default function SourcesPage() {
                 />
               ))}
             </div>
+            <div className="flex flex-wrap gap-2" data-testid="status-filters">
+              {STATUS_CHIPS.map((chip) => (
+                <FilterChip
+                  key={chip.label}
+                  label={chip.label}
+                  active={statusFilter === chip.value}
+                  onClick={() => setStatusFilter(chip.value)}
+                  color={chip.color}
+                />
+              ))}
+            </div>
           </div>
 
           {/* Empty states */}
@@ -207,6 +233,22 @@ export default function SourcesPage() {
             </div>
           )}
 
+          {filtered.length === 0 && !deferredSearch && !biasFilter && statusFilter && (
+            <div className="text-center py-12" data-testid="empty-status">
+              <p className="text-gray-600">
+                No {statusFilter} sources found
+              </p>
+              <button
+                type="button"
+                onClick={() => setStatusFilter(null)}
+                className="mt-3 text-sm text-violet-600 hover:underline"
+                data-testid="reset-status-btn"
+              >
+                Reset filter
+              </button>
+            </div>
+          )}
+
           {/* Desktop table */}
           {filtered.length > 0 && (
             <div className="hidden md:block" data-testid="source-table-container">
@@ -216,6 +258,7 @@ export default function SourcesPage() {
                     <th className="py-2 px-4">Source</th>
                     <th className="py-2 px-4">Trust Score</th>
                     <th className="py-2 px-4">Bias</th>
+                    <th className="py-2 px-4">Status</th>
                     <th className="py-2 px-4 hidden lg:table-cell">Categories</th>
                     <th className="py-2 px-4">Stories</th>
                   </tr>
@@ -248,5 +291,5 @@ export default function SourcesPage() {
   );
 }
 
-export { filterSources, BIAS_ORDER, BIAS_CHIPS };
+export { filterSources, BIAS_ORDER, BIAS_CHIPS, STATUS_CHIPS };
 export type { SortMode };

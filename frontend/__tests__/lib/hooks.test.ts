@@ -305,7 +305,7 @@ describe("hooks", () => {
   });
 
   describe("useSources", () => {
-    it("fetches active sources", async () => {
+    it("fetches all sources", async () => {
       const sources = [makeSource({ id: 1 }), makeSource({ id: 2 })];
       mockFetch.mockResolvedValueOnce(mockJsonResponse(sources));
 
@@ -316,7 +316,7 @@ describe("hooks", () => {
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(result.current.data).toHaveLength(2);
       expect(mockFetch).toHaveBeenCalledWith(
-        "/api/bff/sources?active=true",
+        "/api/bff/sources",
         expect.any(Object),
       );
     });

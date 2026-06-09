@@ -145,6 +145,56 @@ describe("SourceTableRow", () => {
     );
     expect(screen.getByTestId("source-row")).toBeInTheDocument();
   });
+
+  it("renders status badge", () => {
+    render(
+      <table>
+        <tbody>
+          <SourceTableRow source={source} />
+        </tbody>
+      </table>,
+    );
+    expect(screen.getByTestId("status-badge")).toHaveTextContent("Trusted");
+  });
+
+  it("renders lifecycle info for candidate", () => {
+    const candidate = makeSource({ status: "candidate", sighting_count: 5 });
+    render(
+      <table>
+        <tbody>
+          <SourceTableRow source={candidate} />
+        </tbody>
+      </table>,
+    );
+    expect(screen.getByTestId("lifecycle-info")).toHaveTextContent("5 sightings");
+  });
+
+  it("renders lifecycle info for probation", () => {
+    const probation = makeSource({
+      status: "probation",
+      articles_validated: 8,
+      articles_failed: 2,
+    });
+    render(
+      <table>
+        <tbody>
+          <SourceTableRow source={probation} />
+        </tbody>
+      </table>,
+    );
+    expect(screen.getByTestId("lifecycle-info")).toHaveTextContent("8/10 validated");
+  });
+
+  it("does not render lifecycle info for trusted", () => {
+    render(
+      <table>
+        <tbody>
+          <SourceTableRow source={source} />
+        </tbody>
+      </table>,
+    );
+    expect(screen.queryByTestId("lifecycle-info")).not.toBeInTheDocument();
+  });
 });
 
 describe("SourceCard", () => {
@@ -197,5 +247,10 @@ describe("SourceCard", () => {
   it("renders favicon", () => {
     render(<SourceCard source={source} />);
     expect(screen.getByTestId("favicon")).toBeInTheDocument();
+  });
+
+  it("renders status badge", () => {
+    render(<SourceCard source={source} />);
+    expect(screen.getByTestId("status-badge")).toBeInTheDocument();
   });
 });

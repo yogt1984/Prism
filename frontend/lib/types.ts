@@ -31,6 +31,13 @@ export const CATEGORIES: Category[] = [
   "world",
 ];
 
+export type SourceStatus =
+  | "seed"
+  | "candidate"
+  | "probation"
+  | "trusted"
+  | "rejected";
+
 export interface Source {
   id: number;
   name: string;
@@ -41,6 +48,14 @@ export interface Source {
   categories: string;
   active: boolean;
   created_at: string;
+  status: SourceStatus;
+  discovered_via: string;
+  sighting_count: number;
+  articles_validated: number;
+  articles_failed: number;
+  probation_start: string | null;
+  last_evaluated: string | null;
+  rejection_reason: string;
 }
 
 export interface Story {

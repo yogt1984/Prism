@@ -187,7 +187,7 @@ export function useStoryResonance(storyId: number | undefined) {
 export function useSources() {
   return useQuery({
     queryKey: ["sources"],
-    queryFn: () => apiFetch<Source[]>("/sources?active=true"),
+    queryFn: () => apiFetch<Source[]>("/sources"),
     staleTime: 30 * 60_000,
   });
 }

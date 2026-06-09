@@ -45,42 +45,43 @@ import SourcesPage, {
   filterSources,
   BIAS_ORDER,
   BIAS_CHIPS,
+  STATUS_CHIPS,
 } from "@/app/sources/page";
 
 describe("filterSources", () => {
   const sources = makeSourceList();
 
   it("returns all sources with no filters", () => {
-    const result = filterSources(sources, "", null, "trust_desc");
+    const result = filterSources(sources, "", null, null, "trust_desc");
     expect(result).toHaveLength(10);
   });
 
   it("filters by name search (case insensitive)", () => {
-    const result = filterSources(sources, "reuters", null, "trust_desc");
+    const result = filterSources(sources, "reuters", null, null, "trust_desc");
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe("Reuters");
   });
 
   it("filters by URL search", () => {
-    const result = filterSources(sources, "bbc.com", null, "trust_desc");
+    const result = filterSources(sources, "bbc.com", null, null, "trust_desc");
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe("BBC");
   });
 
   it("filters by bias label", () => {
-    const result = filterSources(sources, "", "center_left", "trust_desc");
+    const result = filterSources(sources, "", "center_left", null, "trust_desc");
     expect(result).toHaveLength(3); // BBC, CNN, NPR
     result.forEach((s) => expect(s.bias_label).toBe("center_left"));
   });
 
   it("combines search and bias filter", () => {
-    const result = filterSources(sources, "bbc", "center_left", "trust_desc");
+    const result = filterSources(sources, "bbc", "center_left", null, "trust_desc");
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe("BBC");
   });
 
   it("sorts by trust_desc", () => {
-    const result = filterSources(sources, "", null, "trust_desc");
+    const result = filterSources(sources, "", null, null, "trust_desc");
     for (let i = 1; i < result.length; i++) {
       expect(result[i - 1].trust_score).toBeGreaterThanOrEqual(
         result[i].trust_score,
@@ -89,7 +90,7 @@ describe("filterSources", () => {
   });
 
   it("sorts by trust_asc", () => {
-    const result = filterSources(sources, "", null, "trust_asc");
+    const result = filterSources(sources, "", null, null, "trust_asc");
     for (let i = 1; i < result.length; i++) {
       expect(result[i - 1].trust_score).toBeLessThanOrEqual(
         result[i].trust_score,
@@ -98,14 +99,14 @@ describe("filterSources", () => {
   });
 
   it("sorts by name_asc", () => {
-    const result = filterSources(sources, "", null, "name_asc");
+    const result = filterSources(sources, "", null, null, "name_asc");
     for (let i = 1; i < result.length; i++) {
       expect(result[i - 1].name.localeCompare(result[i].name)).toBeLessThanOrEqual(0);
     }
   });
 
   it("sorts by bias order (left to right)", () => {
-    const result = filterSources(sources, "", null, "bias");
+    const result = filterSources(sources, "", null, null, "bias");
     for (let i = 1; i < result.length; i++) {
       expect(
         (BIAS_ORDER[result[i - 1].bias_label] ?? 5),
@@ -114,12 +115,12 @@ describe("filterSources", () => {
   });
 
   it("returns empty array when search matches nothing", () => {
-    const result = filterSources(sources, "nonexistent", null, "trust_desc");
+    const result = filterSources(sources, "nonexistent", null, null, "trust_desc");
     expect(result).toHaveLength(0);
   });
 
   it("returns empty array when bias filter matches nothing", () => {
-    const result = filterSources(sources, "", "unknown", "trust_desc");
+    const result = filterSources(sources, "", "unknown", null, "trust_desc");
     expect(result).toHaveLength(0);
   });
 });
@@ -189,7 +190,7 @@ describe("SourcesPage", () => {
     });
     expect(
       screen.getByText(
-        "Every source Prism aggregates from, with trust and bias ratings",
+        "Every source Prism tracks, with trust, bias, and lifecycle status",
       ),
     ).toBeInTheDocument();
   });
@@ -199,7 +200,7 @@ describe("SourcesPage", () => {
     render(<SourcesPage />, { wrapper: Wrapper });
     await waitFor(() => {
       expect(screen.getByTestId("source-count")).toHaveTextContent(
-        "10 active sources",
+        "10 sources",
       );
     });
   });
@@ -447,7 +448,7 @@ describe("SourcesPage", () => {
     render(<SourcesPage />, { wrapper: Wrapper });
     await waitFor(() => {
       expect(screen.getByTestId("source-count")).toHaveTextContent(
-        "1 active source",
+        "1 source",
       );
     });
   });
@@ -604,7 +605,94 @@ describe("SourcesPage", () => {
       expect(screen.getByText("Source")).toBeInTheDocument();
       expect(screen.getByText("Trust Score")).toBeInTheDocument();
       expect(screen.getByText("Bias")).toBeInTheDocument();
+      expect(screen.getByText("Status")).toBeInTheDocument();
       expect(screen.getByText("Stories")).toBeInTheDocument();
     });
+  });
+
+  it("renders status filter chips", async () => {
+    respondWithSources(makeSourceList());
+    render(<SourcesPage />, { wrapper: Wrapper });
+    await waitFor(() => {
+      expect(screen.getByTestId("status-filters")).toBeInTheDocument();
+    });
+  });
+
+  it("renders status badges for sources (table + cards)", async () => {
+    respondWithSources(makeSourceList());
+    render(<SourcesPage />, { wrapper: Wrapper });
+    await waitFor(() => {
+      const badges = screen.getAllByTestId("status-badge");
+      expect(badges.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("filters by status chip", async () => {
+    respondWithSources(makeSourceList());
+    render(<SourcesPage />, { wrapper: Wrapper });
+    await waitFor(() => {
+      expect(screen.getAllByTestId("source-row")).toHaveLength(10);
+    });
+
+    fireEvent.click(screen.getByTestId("filter-chip-candidate"));
+
+    await waitFor(() => {
+      const rows = screen.getAllByTestId("source-row");
+      expect(rows).toHaveLength(2); // Fox News + Jacobin
+    });
+  });
+
+  it("All Statuses chip resets status filter", async () => {
+    respondWithSources(makeSourceList());
+    render(<SourcesPage />, { wrapper: Wrapper });
+    await waitFor(() => {
+      expect(screen.getAllByTestId("source-row")).toHaveLength(10);
+    });
+
+    fireEvent.click(screen.getByTestId("filter-chip-candidate"));
+    await waitFor(() => {
+      expect(screen.getAllByTestId("source-row")).toHaveLength(2);
+    });
+
+    fireEvent.click(screen.getByTestId("filter-chip-all-statuses"));
+    await waitFor(() => {
+      expect(screen.getAllByTestId("source-row")).toHaveLength(10);
+    });
+  });
+});
+
+describe("STATUS_CHIPS", () => {
+  it("has 6 chips including All Statuses", () => {
+    expect(STATUS_CHIPS).toHaveLength(6);
+    expect(STATUS_CHIPS[0].value).toBeNull();
+    expect(STATUS_CHIPS[0].label).toBe("All Statuses");
+  });
+
+  it("has colors for non-All chips", () => {
+    STATUS_CHIPS.slice(1).forEach((chip) => {
+      expect(chip.color).toBeDefined();
+    });
+  });
+});
+
+describe("filterSources with status", () => {
+  const sources = makeSourceList();
+
+  it("filters by status", () => {
+    const result = filterSources(sources, "", null, "candidate", "trust_desc");
+    expect(result).toHaveLength(2);
+    result.forEach((s) => expect(s.status).toBe("candidate"));
+  });
+
+  it("combines bias and status filters", () => {
+    const result = filterSources(sources, "", "right", "candidate", "trust_desc");
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("Fox News");
+  });
+
+  it("combines search and status filters", () => {
+    const result = filterSources(sources, "jacobin", null, "candidate", "trust_desc");
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("Jacobin");
   });
 });
