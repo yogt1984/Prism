@@ -1,3 +1,5 @@
+import Button from "@/components/ui/Button";
+
 interface PaginationProps {
   offset: number;
   pageSize: number;
@@ -22,25 +24,27 @@ export default function Pagination({
       className="flex items-center justify-between border-t border-gray-200 pt-4"
       data-testid="pagination"
     >
-      <button
+      <Button
+        variant="secondary"
+        size="sm"
         onClick={onPrevious}
         disabled={!hasPrevious}
-        className="px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
         data-testid="pagination-prev"
       >
         Previous
-      </button>
+      </Button>
       <span className="text-sm text-gray-500" data-testid="pagination-info">
         Page {page}
       </span>
-      <button
+      <Button
+        variant="secondary"
+        size="sm"
         onClick={onNext}
         disabled={!hasNext}
-        className="px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
         data-testid="pagination-next"
       >
         Next
-      </button>
+      </Button>
     </div>
   );
 }
