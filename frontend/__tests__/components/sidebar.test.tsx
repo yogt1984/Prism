@@ -96,4 +96,70 @@ describe("Sidebar", () => {
     renderWithQuery(<Sidebar />);
     expect(screen.getByTestId("sidebar")).toBeInTheDocument();
   });
+
+  it("shows upgrade link for free users", async () => {
+    mockUseSession.mockReturnValue({
+      data: { user: { id: 5, name: "Alice", email: "alice@example.com" } },
+    });
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes("/users/5")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 5,
+            email: "alice@example.com",
+            name: "Alice",
+            interests: "finance",
+            preferred_format: "email",
+            briefing_depth: 10,
+            is_pro: false,
+            pro_since: null,
+            pro_until: null,
+            has_stripe_subscription: false,
+            created_at: "2026-05-15T10:00:00Z",
+          }),
+          headers: new Headers({ "content-type": "application/json" }),
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+    });
+    renderWithQuery(<Sidebar />);
+    const link = await screen.findByTestId("upgrade-link");
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveTextContent("Upgrade to Pro");
+  });
+
+  it("hides upgrade link for pro users", async () => {
+    mockUseSession.mockReturnValue({
+      data: { user: { id: 5, name: "Alice", email: "alice@example.com" } },
+    });
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes("/users/5")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 5,
+            email: "alice@example.com",
+            name: "Alice",
+            interests: "finance",
+            preferred_format: "email",
+            briefing_depth: 10,
+            is_pro: true,
+            pro_since: "2026-03-15T00:00:00Z",
+            pro_until: null,
+            has_stripe_subscription: true,
+            created_at: "2026-05-15T10:00:00Z",
+          }),
+          headers: new Headers({ "content-type": "application/json" }),
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+    });
+    renderWithQuery(<Sidebar />);
+    // Wait for user data to load
+    await screen.findByTestId("user-greeting");
+    expect(screen.queryByTestId("upgrade-link")).not.toBeInTheDocument();
+  });
 });

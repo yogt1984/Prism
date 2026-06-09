@@ -12,7 +12,7 @@ const NAV_ITEMS = [
   { label: "Settings", href: "/settings" },
 ] as const;
 
-const HIDDEN_ROUTES = ["/login", "/signup", "/check-email", "/auth-error", "/"];
+const HIDDEN_ROUTES = ["/login", "/signup", "/check-email", "/auth-error", "/", "/pricing"];
 
 function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + "/");

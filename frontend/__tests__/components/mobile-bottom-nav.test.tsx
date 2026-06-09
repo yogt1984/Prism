@@ -126,11 +126,12 @@ describe("NAV_ITEMS", () => {
 });
 
 describe("HIDDEN_ROUTES", () => {
-  it("includes auth pages and root", () => {
+  it("includes auth pages, root, and pricing", () => {
     expect(HIDDEN_ROUTES).toContain("/login");
     expect(HIDDEN_ROUTES).toContain("/signup");
     expect(HIDDEN_ROUTES).toContain("/check-email");
     expect(HIDDEN_ROUTES).toContain("/auth-error");
     expect(HIDDEN_ROUTES).toContain("/");
+    expect(HIDDEN_ROUTES).toContain("/pricing");
   });
 });
