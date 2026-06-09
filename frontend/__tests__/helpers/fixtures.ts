@@ -113,6 +113,14 @@ export function makeSource(overrides: Partial<Source> = {}): Source {
     categories: "finance,politics,world",
     active: true,
     created_at: new Date().toISOString(),
+    status: "trusted",
+    discovered_via: "",
+    sighting_count: 0,
+    articles_validated: 0,
+    articles_failed: 0,
+    probation_start: null,
+    last_evaluated: null,
+    rejection_reason: "",
     ...overrides,
   };
 }
@@ -258,6 +266,10 @@ export function makeSourceList(): Source[] {
       trust_score: 0.72,
       bias_label: "center_left",
       categories: "politics,world",
+      status: "probation",
+      articles_validated: 15,
+      articles_failed: 3,
+      probation_start: new Date(Date.now() - 7 * 86_400_000).toISOString(),
     }),
     makeSource({
       id: 5,
@@ -266,6 +278,8 @@ export function makeSourceList(): Source[] {
       trust_score: 0.55,
       bias_label: "right",
       categories: "politics,finance",
+      status: "candidate",
+      sighting_count: 7,
     }),
     makeSource({
       id: 6,
@@ -298,6 +312,8 @@ export function makeSourceList(): Source[] {
       trust_score: 0.25,
       bias_label: "right",
       categories: "politics",
+      status: "rejected",
+      rejection_reason: "Low factual accuracy",
     }),
     makeSource({
       id: 10,
@@ -306,6 +322,8 @@ export function makeSourceList(): Source[] {
       trust_score: 0.45,
       bias_label: "left",
       categories: "politics,culture",
+      status: "candidate",
+      sighting_count: 3,
     }),
   ];
 }

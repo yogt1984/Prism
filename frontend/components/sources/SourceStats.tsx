@@ -1,5 +1,6 @@
-import type { Source } from "@/lib/types";
+import type { Source, SourceStatus } from "@/lib/types";
 import BiasDistributionChart from "./BiasDistributionChart";
+import StatusBadge from "./StatusBadge";
 
 interface SourceStatsProps {
   sources: Source[];
@@ -23,13 +24,29 @@ export function computeBiasDistribution(
   );
 }
 
+export function computeStatusDistribution(
+  sources: Source[],
+): Record<string, number> {
+  return sources.reduce(
+    (acc, s) => {
+      acc[s.status] = (acc[s.status] || 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
+}
+
 export default function SourceStats({ sources }: SourceStatsProps) {
   const avgTrust = computeAvgTrust(sources);
-  const distribution = computeBiasDistribution(sources);
+  const biasDistribution = computeBiasDistribution(sources);
+  const statusDistribution = computeStatusDistribution(sources);
+  const statusEntries = Object.entries(statusDistribution).filter(
+    ([, count]) => count > 0,
+  );
 
   return (
     <div
-      className="grid grid-cols-1 sm:grid-cols-3 gap-4"
+      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
       data-testid="source-stats"
     >
       <div className="rounded-lg border border-gray-200 p-4" data-testid="stat-avg-trust">
@@ -45,16 +62,32 @@ export default function SourceStats({ sources }: SourceStatsProps) {
         <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
           Bias Distribution
         </p>
-        <BiasDistributionChart distribution={distribution} />
+        <BiasDistributionChart distribution={biasDistribution} />
       </div>
 
-      <div className="rounded-lg border border-gray-200 p-4" data-testid="stat-total-active">
+      <div className="rounded-lg border border-gray-200 p-4" data-testid="stat-total-sources">
         <p className="text-xs text-gray-500 uppercase tracking-wide">
-          Total Active
+          Total Sources
         </p>
         <p className="mt-1 text-2xl font-semibold text-gray-900">
           {sources.length}
         </p>
+      </div>
+
+      <div className="rounded-lg border border-gray-200 p-4" data-testid="stat-status-breakdown">
+        <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
+          Lifecycle Breakdown
+        </p>
+        <ul className="space-y-1">
+          {statusEntries.map(([status, count]) => (
+            <li key={status} className="flex items-center justify-between">
+              <StatusBadge status={status as SourceStatus} />
+              <span className="text-sm text-gray-700 tabular-nums font-medium">
+                {count}
+              </span>
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );

@@ -5,6 +5,8 @@ import type { Source } from "@/lib/types";
 import BiasLabelBadge from "@/components/story/BiasLabelBadge";
 import CategoryPill from "@/components/dashboard/CategoryPill";
 import TrustBar from "./TrustBar";
+import StatusBadge from "./StatusBadge";
+import LifecycleInfo from "./LifecycleInfo";
 
 interface SourceRowProps {
   source: Source;
@@ -68,6 +70,12 @@ export function SourceTableRow({ source }: SourceRowProps) {
       <td className="py-3 px-4">
         <BiasLabelBadge label={source.bias_label} />
       </td>
+      <td className="py-3 px-4">
+        <div className="flex flex-col gap-1">
+          <StatusBadge status={source.status} />
+          <LifecycleInfo source={source} />
+        </div>
+      </td>
       <td className="py-3 px-4 hidden lg:table-cell">
         <div className="flex flex-wrap gap-1">
           {getCategories(source.categories).map((c) => (
@@ -104,11 +112,13 @@ export function SourceCard({ source }: SourceRowProps) {
       </div>
       <TrustBar value={source.trust_score} />
       <div className="flex items-center gap-2 flex-wrap">
+        <StatusBadge status={source.status} />
         <BiasLabelBadge label={source.bias_label} />
         {getCategories(source.categories).map((c) => (
           <CategoryPill key={c} category={c} />
         ))}
       </div>
+      <LifecycleInfo source={source} />
       <a
         href={`/stories?source=${source.id}`}
         className="text-sm text-violet-600 hover:underline"

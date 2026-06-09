@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import SourceStats, {
   computeAvgTrust,
   computeBiasDistribution,
+  computeStatusDistribution,
 } from "@/components/sources/SourceStats";
 import { makeSource, makeSourceList } from "../helpers/fixtures";
 
@@ -66,10 +67,10 @@ describe("SourceStats", () => {
     expect(avgCard).toHaveTextContent(avg.toFixed(2));
   });
 
-  it("renders total active count", () => {
+  it("renders total sources count", () => {
     const sources = makeSourceList();
     render(<SourceStats sources={sources} />);
-    const totalCard = screen.getByTestId("stat-total-active");
+    const totalCard = screen.getByTestId("stat-total-sources");
     expect(totalCard).toHaveTextContent("10");
   });
 
@@ -89,17 +90,60 @@ describe("SourceStats", () => {
     render(<SourceStats sources={makeSourceList()} />);
     expect(screen.getByText("Average Trust")).toBeInTheDocument();
     expect(screen.getByText("Bias Distribution")).toBeInTheDocument();
-    expect(screen.getByText("Total Active")).toBeInTheDocument();
+    expect(screen.getByText("Total Sources")).toBeInTheDocument();
   });
 
   it("shows 0.00 for empty sources", () => {
     render(<SourceStats sources={[]} />);
     expect(screen.getByTestId("stat-avg-trust")).toHaveTextContent("0.00");
-    expect(screen.getByTestId("stat-total-active")).toHaveTextContent("0");
+    expect(screen.getByTestId("stat-total-sources")).toHaveTextContent("0");
   });
 
   it("shows No data in chart for empty sources", () => {
     render(<SourceStats sources={[]} />);
     expect(screen.getByTestId("bias-chart-empty")).toBeInTheDocument();
+  });
+
+  it("renders lifecycle breakdown card", () => {
+    render(<SourceStats sources={makeSourceList()} />);
+    expect(screen.getByTestId("stat-status-breakdown")).toBeInTheDocument();
+    expect(screen.getByText("Lifecycle Breakdown")).toBeInTheDocument();
+  });
+
+  it("renders status badges in lifecycle breakdown", () => {
+    render(<SourceStats sources={makeSourceList()} />);
+    const breakdown = screen.getByTestId("stat-status-breakdown");
+    const badges = breakdown.querySelectorAll('[data-testid="status-badge"]');
+    expect(badges.length).toBeGreaterThan(0);
+  });
+});
+
+describe("computeStatusDistribution", () => {
+  it("returns empty object for empty array", () => {
+    expect(computeStatusDistribution([])).toEqual({});
+  });
+
+  it("counts statuses correctly", () => {
+    const sources = [
+      makeSource({ status: "trusted" }),
+      makeSource({ status: "trusted" }),
+      makeSource({ status: "candidate" }),
+      makeSource({ status: "probation" }),
+    ];
+    const dist = computeStatusDistribution(sources);
+    expect(dist.trusted).toBe(2);
+    expect(dist.candidate).toBe(1);
+    expect(dist.probation).toBe(1);
+  });
+
+  it("handles makeSourceList with mixed statuses", () => {
+    const sources = makeSourceList();
+    const dist = computeStatusDistribution(sources);
+    // trusted: 6 (Reuters, AP, BBC, Guardian, WSJ, NPR), candidate: 2 (Fox, Jacobin),
+    // probation: 1 (CNN), rejected: 1 (Breitbart)
+    expect(dist.trusted).toBe(6);
+    expect(dist.candidate).toBe(2);
+    expect(dist.probation).toBe(1);
+    expect(dist.rejected).toBe(1);
   });
 });
