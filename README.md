@@ -231,6 +231,9 @@ Prism exposes a FastAPI-based REST API for programmatic access. Run with
 | GET | `/users/{id}/briefings/{bid}` | Briefing detail with content |
 | POST | `/users/{id}/briefings` | Trigger on-demand briefing |
 | POST | `/engagements` | Record interaction (open/read/save/skip) |
+| POST | `/users/{id}/checkout` | Create Stripe checkout session |
+| POST | `/users/{id}/portal` | Create Stripe customer portal session |
+| POST | `/webhooks/stripe` | Stripe webhook handler (checkout, invoice, cancellation) |
 
 Interactive docs at `/docs` (Swagger UI) and `/redoc`.
 
@@ -278,12 +281,17 @@ progress messages), `--db <url>` (override database).
 | `PERCEPTION_HALF_LIFE_HOURS` | No | `24` |
 | `PERCEPTION_WINDOW_HOURS` | No | `72` |
 | `PERCEPTION_SCAN_INTERVAL_MINUTES` | No | `30` |
+| `STRIPE_SECRET_KEY` | No | `""` |
+| `STRIPE_PRICE_ID` | No | `""` |
+| `STRIPE_WEBHOOK_SECRET` | No | `""` |
+| `GRACE_PERIOD_DAYS` | No | `7` |
 
 ## Testing
 
 ```bash
-pytest                       # 880+ tests
-ruff check src/ tests/       # lint
+pytest                                   # 880+ backend tests
+ruff check src/ tests/                   # backend lint
+cd frontend && npx vitest run            # 1058 frontend tests
 ```
 
 ## Project Structure
@@ -329,7 +337,50 @@ docs/
   specifications.md    full system requirements (agents, data model, reliability)
   resonance_specs.md   resonance metric definition, formula, implementation tasks
   cli-specification.md CLI command tree, output examples, milestones
+frontend/
+  app/               Next.js App Router pages (12 routes)
+  components/        React components by domain (dashboard, story, briefing,
+                     sources, perception, settings, subscription, navigation, ui)
+  lib/               types.ts, hooks.ts (25 data-fetching hooks), api.ts
+  __tests__/         87 test files, 1058 tests (vitest + testing-library)
 ```
+
+## Web Frontend
+
+Next.js + Tailwind CSS application consuming the REST API via a BFF proxy.
+
+**Pages:**
+
+| Route | Description |
+|-------|-------------|
+| `/` | Product landing page -- value props, how-it-works, CTAs |
+| `/login`, `/signup` | Authentication (next-auth) |
+| `/dashboard` | Story feed with top stories, resonance badges, keyword sidebar |
+| `/stories/{id}` | Story detail with multi-perspective viewer, engagement tracking |
+| `/briefings` | Briefing list with pagination, format/sent badges |
+| `/briefings/{id}` | Briefing reader (HTML/plaintext) with engagement tracking |
+| `/sources` | Source explorer -- trust scores, bias labels, lifecycle status filters |
+| `/perception` | Perception dashboard -- keyword charts, sparklines, momentum |
+| `/settings` | Profile, interests, briefing preferences, subscription management |
+| `/pricing` | Free vs Pro tier comparison with contextual upgrade CTAs |
+
+**Key features:**
+
+- **Engagement feedback loop**: Story detail and briefing reader record open/read/save/skip
+  events, closing the P_AI personalization loop
+- **Source lifecycle UI**: Surfaces D_AI discovery status (seed → candidate → probation →
+  trusted/rejected) with status badges and filter chips
+- **Subscription flow**: Stripe checkout integration, grace period handling, upgrade/manage CTAs
+- **Shared UI components**: Button, Card, Skeleton, Badge primitives used across all pages
+- **Responsive navigation**: Sidebar on desktop (lg+), bottom nav on mobile/tablet
+- **1058 frontend tests** across 87 test files (vitest + testing-library)
+
+```bash
+cd frontend && npm install && npm run dev   # development server on :3000
+npx vitest run                              # run test suite
+```
+
+---
 
 ## Development Status
 
@@ -356,11 +407,20 @@ docs/
 - **Perception Pressure**: Longitudinal keyword tracking -- R_AI agent,
   signed perception float (salience x valence), keyword management,
   time-series snapshots, momentum tracking, CLI + API exposure, 24 new tests
+- **Source Auto-Discovery**: D_AI candidate pipeline -- automated source
+  discovery via Brave, probation lifecycle (seed → candidate → probation →
+  trusted/rejected), quality gates, trust promotion
+- **Web Frontend**: Next.js application -- 12 routes, engagement tracking,
+  source lifecycle UI, subscription flow, pricing page, landing page,
+  shared UI components, responsive navigation, 1058 tests
 
 ## Tech Stack
 
-Python 3.12 / SQLModel / Claude API / Brave Search / Resend / APScheduler /
-FastAPI / Uvicorn / Typer / Rich / SQLite WAL
+**Backend:** Python 3.12 / SQLModel / Claude API / Brave Search / Resend /
+APScheduler / FastAPI / Uvicorn / Typer / Rich / SQLite WAL
+
+**Frontend:** Next.js / React / TypeScript / Tailwind CSS / TanStack Query /
+next-auth / vitest / testing-library
 
 ## License
 
